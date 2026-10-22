@@ -1,0 +1,27 @@
+{
+  "name": "slack-agent-reference",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Two Slack agents built on the Claude Agent SDK, with every credential brokered by Infisical Agent Vault.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env src/main.ts",
+    "ask": "node --env-file-if-exists=.env src/ask.ts",
+    "typecheck": "tsc",
+    "test": "node --test \"src/**/*.test.ts\""
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.2.138",
+    "@slack/bolt": "4.7.0",
+    "@slack/web-api": "7.15.0",
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "25.6.0",
+    "typescript": "6.0.2"
+  }
+}
