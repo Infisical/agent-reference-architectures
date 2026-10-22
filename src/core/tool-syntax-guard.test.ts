@@ -43,6 +43,12 @@ test("strips a block whose opening tag has attributes, body and all", () => {
   assert.match(cleaned, /Sure\..*Done\./);
 });
 
+test("strips a namespaced block, body and all", () => {
+  const ns = "antml:";
+  const cleaned = stripToolProtocolSyntax(`Done. <${ns}tool_result>invented result</${ns}tool_result>`);
+  assert.equal(cleaned, "Done.");
+});
+
 test("strips stray, unbalanced tags", () => {
   assert.equal(stripToolProtocolSyntax("Here you go: <tool_response> partial"), "Here you go:  partial");
 });

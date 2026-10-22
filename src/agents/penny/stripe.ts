@@ -27,17 +27,29 @@ async function stripeRequest<T>(method: "GET" | "POST", path: string, params = n
 interface PaymentIntent {
   id: string;
   amount: number;
+  amount_received: number;
   currency: string;
   status: string;
   created: number;
   description: string | null;
-  cancellation_reason: string | null;
   last_payment_error: { message?: string } | null;
   customer: null | string | { id: string; name?: string | null; email?: string | null };
 }
 
-const money = (cents: number, currency: string) =>
-  new Intl.NumberFormat("en-US", { style: "currency", currency: currency.toUpperCase() }).format(cents / 100);
+/** Stripe amounts are in the currency's smallest unit: cents for USD, whole yen for JPY. */
+function money(amount: number, currency: string): string {
+  const format = new Intl.NumberFormat("en-US", { style: "currency", currency: currency.toUpperCase() });
+  return format.format(amount / 10 ** (format.resolvedOptions().maximumFractionDigits ?? 2));
+}
+
+/**
+ * A payment counts as failed only if a charge attempt failed. Every new PaymentIntent starts in
+ * requires_payment_method, so that status alone just means the customer hasn't paid yet.
+ */
+function failureReason(pi: PaymentIntent): string | null {
+  if (pi.status === "succeeded" || !pi.last_payment_error) return null;
+  return pi.last_payment_error.message ?? "payment failed";
+}
 
 export const paymentReport = tool(
   "payment_report",
@@ -52,11 +64,13 @@ export const paymentReport = tool(
 
       const intents: PaymentIntent[] = [];
       let startingAfter: string | undefined;
+      let partial = false;
       for (let page = 0; page < MAX_PAGES; page++) {
         const params = new URLSearchParams({ limit: "100", "created[gte]": String(since), "expand[]": "data.customer" });
         if (startingAfter) params.set("starting_after", startingAfter);
         const res = await stripeRequest<{ data: PaymentIntent[]; has_more: boolean }>("GET", "/payment_intents", params);
         intents.push(...res.data);
+        partial = res.has_more;
         if (!res.has_more || !res.data.length) break;
         startingAfter = res.data.at(-1)!.id;
       }
@@ -66,14 +80,14 @@ export const paymentReport = tool(
       const failed: string[] = [];
       for (const pi of intents) {
         const t = totals.get(pi.currency) ?? { succeeded: 0, succeededCents: 0, failed: 0, failedCents: 0 };
+        const reason = failureReason(pi);
         if (pi.status === "succeeded") {
           t.succeeded += 1;
-          t.succeededCents += pi.amount;
-        } else if (pi.status === "canceled" || pi.status === "requires_payment_method") {
+          t.succeededCents += pi.amount_received;
+        } else if (reason) {
           t.failed += 1;
           t.failedCents += pi.amount;
           const c = typeof pi.customer === "object" ? pi.customer : null;
-          const reason = pi.last_payment_error?.message ?? pi.cancellation_reason ?? pi.status;
           failed.push(
             `- ${c?.name ?? "unknown"} <${c?.email ?? "no email"}> · ${money(pi.amount, pi.currency)} · ${new Date(pi.created * 1000).toISOString()} · ${reason}${pi.description ? ` · ${pi.description}` : ""} · customer ${c?.id ?? "none"}`,
           );
@@ -81,7 +95,11 @@ export const paymentReport = tool(
         totals.set(pi.currency, t);
       }
 
-      const out = [`Payments in the last ${hours}h (${intents.length} total, others still in progress):`];
+      const out = [
+        partial
+          ? `Only the newest ${intents.length} payments in the last ${hours}h were read, so these totals are partial. Use a shorter window for a full count.`
+          : `Payments in the last ${hours}h (${intents.length} total, the rest are in progress or canceled without a failed charge):`,
+      ];
       for (const [currency, t] of totals) {
         out.push(
           `- ${currency.toUpperCase()}: ${t.succeeded} succeeded (${money(t.succeededCents, currency)}), ${t.failed} failed (${money(t.failedCents, currency)} lost)`,
@@ -102,7 +120,7 @@ export const createCoupon = tool(
     durationInMonths: z.number().int().min(1).max(36).optional().describe('Required when duration is "repeating".'),
   },
   async (args) =>
-    runTool("I couldn't reach Stripe just now, so I didn't create the coupon.", async () => {
+    runTool("The request to Stripe failed, so I don't know whether the coupon was created. Check Stripe before trying again.", async () => {
       if (args.duration === "repeating" && !args.durationInMonths) {
         return text("A repeating coupon needs durationInMonths. Ask how many months it should last.");
       }

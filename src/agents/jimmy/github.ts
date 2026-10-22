@@ -1,5 +1,6 @@
-// GitHub tools for one repo. The repo comes from env, never from the model, so the agent can only
-// read and file issues there. GITHUB_TOKEN is a placeholder; Agent Vault attaches the real one.
+// GitHub tools for one repo. The repo comes from env, never from the model, so these tools only
+// touch that repo. http_get can still reach anything the token can, so use a token scoped to this
+// one repo. GITHUB_TOKEN is a placeholder; Agent Vault attaches the real one.
 import { tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import type { RequestContext } from "../../core/agent.ts";
@@ -27,6 +28,13 @@ async function githubFetch<T>(path: string, init: RequestInit = {}): Promise<T> 
     throw new Error(`GitHub API error: ${response.status} ${response.statusText}. ${body.slice(0, 500)}`);
   }
   return response.json() as Promise<T>;
+}
+
+/** Encodes each segment of a repo path, and rejects "." and ".." so the path stays inside the repo. */
+function encodePath(path: string): string {
+  const segments = path.split("/").filter(Boolean);
+  if (segments.some((s) => s === "." || s === "..")) throw new Error(`Invalid path: ${path}`);
+  return segments.map(encodeURIComponent).join("/");
 }
 
 interface Commit {
@@ -89,7 +97,7 @@ export const readFile = tool(
   async (args) =>
     runTool("I couldn't read that file just now. Try again in a moment.", async () => {
       const ref = args.ref ? `?ref=${encodeURIComponent(args.ref)}` : "";
-      const file = await githubFetch<{ type: string; content?: string }>(`/contents/${args.path.replace(/^\/+/, "")}${ref}`);
+      const file = await githubFetch<{ type: string; content?: string }>(`/contents/${encodePath(args.path)}${ref}`);
       if (file.type !== "file" || !file.content) return text(`${args.path} is not a readable file.`);
       const numbered = Buffer.from(file.content, "base64")
         .toString("utf8")
@@ -113,7 +121,7 @@ export function fileIncidentIssue(ctx: RequestContext) {
         .describe("GitHub Markdown: impact, the Sentry link, root cause with the culprit commit sha and link, and the proposed fix as a ```diff block."),
     },
     async (args) =>
-      runTool("I couldn't reach GitHub just now, so I didn't file the issue. Nothing was created.", async () => {
+      runTool("The request to GitHub failed, so I don't know whether the issue was created. Check the repo's issues before trying again.", async () => {
         const thread = ctx.threadUrl ? ` in [this Slack thread](${ctx.threadUrl})` : "";
         const issue = await githubFetch<{ number: number; html_url: string }>("/issues", {
           method: "POST",

@@ -82,10 +82,13 @@ export async function startSlackBot(agent: Agent): Promise<void> {
       const text = stripBotMention(m.text);
       if (m.user === botUserId || m.bot_id) {
         // Strip fake tool transcripts from past answers so the model doesn't learn to copy them.
-        lines.push(`${agent.name}: ${stripToolProtocolSyntax(text)}`);
+        const name = m.user === botUserId ? agent.name : (m.bot_profile?.name ?? "Another bot");
+        lines.push(`${name}: ${stripToolProtocolSyntax(text)}`);
       } else {
-        const name = m.user ? (await lookUpUser(client, m.user)).name : undefined;
-        lines.push(`${name ?? `<@${m.user}>`}: ${text}`);
+        // Leave out people who aren't on the allowlist, so they can't steer the agent through the thread.
+        const user = m.user ? await lookUpUser(client, m.user) : {};
+        if (!isAllowedEmail(user.email)) continue;
+        lines.push(`${user.name ?? `<@${m.user}>`}: ${text}`);
       }
     }
 
@@ -122,8 +125,17 @@ export async function startSlackBot(agent: Agent): Promise<void> {
     const thinkingTs = thinking.ts;
     if (!thinkingTs) return;
 
+    // Progress updates run one at a time, and the final answer waits for the last one, so a slow
+    // status update can't land after the answer and replace it.
+    let lastProgress = "";
+    let progressUpdates = Promise.resolve();
+    let finished = false;
+    const finishProgress = () => {
+      finished = true;
+      return progressUpdates;
+    };
+
     try {
-      let lastProgress = "";
       const answer = await runAgent(agent, prompt, {
         context: {
           requesterName: requester.name ?? `<@${event.user}>`,
@@ -132,17 +144,21 @@ export async function startSlackBot(agent: Agent): Promise<void> {
             : undefined,
         },
         onProgress: (progress) => {
-          if (progress === lastProgress) return;
+          if (finished || progress === lastProgress) return;
           lastProgress = progress;
-          client.chat.update({ channel, ts: thinkingTs, text: progress }).catch(() => {});
+          progressUpdates = progressUpdates
+            .then(() => client.chat.update({ channel, ts: thinkingTs, text: progress }))
+            .then(() => {}, () => {});
         },
       });
 
+      await finishProgress();
       const [first, ...rest] = chunkText(answer || "I couldn't find an answer. Try rephrasing your question.");
       await client.chat.update({ channel, ts: thinkingTs, text: first });
       for (const chunk of rest) await reply(chunk);
     } catch (err) {
       console.error("Agent error:", err);
+      await finishProgress();
       await client.chat
         .update({ channel, ts: thinkingTs, text: ":warning: Sorry, I ran into an error. Please try again." })
         .catch((updateErr) => console.error("Failed to post the error message:", updateErr));

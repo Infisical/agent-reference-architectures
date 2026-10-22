@@ -1,5 +1,7 @@
-// Read-only Sentry tools. The org and project come from env, never from the model, so the agent
-// can't look anywhere else. SENTRY_AUTH_TOKEN is a placeholder; Agent Vault attaches the real one.
+// Read-only Sentry tools. The org and project come from env, never from the model, so these tools
+// only read one project. http_get can still reach anything the Sentry token can, so scope the token
+// in Agent Vault to what the agent needs. SENTRY_AUTH_TOKEN is a placeholder; Agent Vault attaches
+// the real one.
 import { tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import { requireEnv } from "../../core/config.ts";
@@ -52,7 +54,7 @@ export const listSentryIssues = tool(
   `List error issues in the ${SENTRY_PROJECT} Sentry project, most recent first. Use this to see what is breaking right now.`,
   {
     query: z.string().optional().describe('Sentry search query. Defaults to "is:unresolved".'),
-    period: z.string().optional().describe('Time window such as "24h" or "14d". Defaults to "14d".'),
+    period: z.enum(["24h", "14d"]).optional().describe('Window for the event and user counts. Defaults to "14d".'),
   },
   async (args) =>
     runTool("I couldn't reach Sentry just now. Try again in a moment.", async () => {
@@ -76,7 +78,7 @@ export const getSentryIssue = tool(
   "get_sentry_issue",
   "Get one Sentry issue in detail: the latest event's exception, in-app stack trace with source context, the failing request, and tags. Use this to find the file and line that broke.",
   {
-    issueId: z.string().describe("The numeric issue id from list_sentry_issues, not the short id."),
+    issueId: z.string().regex(/^\d+$/).describe("The numeric issue id from list_sentry_issues, not the short id."),
   },
   async (args) =>
     runTool("I couldn't load that Sentry issue just now. Try again in a moment.", async () => {

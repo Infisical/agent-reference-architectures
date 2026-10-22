@@ -9,7 +9,7 @@ const TAGS = BLOCK_TAGS.join("|");
 
 // Anchored on the tag name right after "<" so Slack's <url|label> links and <@U123> mentions never match.
 const ANY_TAG = new RegExp(`<\\/?(?:antml:)?(?:${TAGS})\\b`, "i");
-const BALANCED_BLOCK = new RegExp(`<(${TAGS})\\b[^>]*>[\\s\\S]*?<\\/\\1>`, "gi");
+const BALANCED_BLOCK = new RegExp(`<((?:antml:)?(?:${TAGS}))\\b[^>]*>[\\s\\S]*?<\\/\\1>`, "gi");
 const STRAY_TAG = new RegExp(`<\\/?(?:antml:)?(?:${TAGS}|parameter)\\b[^>]*>`, "gi");
 
 export function containsToolProtocolSyntax(text: string): boolean {
