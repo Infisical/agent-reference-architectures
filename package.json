@@ -1,5 +1,5 @@
 {
-  "name": "slack-agent-reference",
+  "name": "slack-agent-basic",
   "version": "0.1.0",
   "private": true,
   "description": "Two Slack agents built on the Claude Agent SDK, with every credential brokered by Infisical Agent Vault.",
