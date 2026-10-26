@@ -20,6 +20,12 @@ export function httpGetTool(agentName: string) {
       runTool("The request failed before it got a response. Try again in a moment.", async () => {
         const url = new URL(args.url);
         if (url.protocol !== "https:") return text("Only https URLs are allowed.");
+        // Slack's Web API accepts GET for write methods like chat.postMessage, and the Slack service
+        // is in every access bundle, so a GET there isn't read-only. The bot's own code talks to Slack.
+        const host = url.hostname.replace(/\.$/, "");
+        if (host === "slack.com" || host.endsWith(".slack.com")) {
+          return text("http_get can't call Slack. Slack is only reachable through the bot itself.");
+        }
 
         const response = await fetch(url, {
           headers: { Accept: "application/json", "User-Agent": `${agentName.toLowerCase()}-agent` },
