@@ -1,0 +1,10 @@
+{"type":"attached","session_id":"proc_FIXTURE","route_generation":2,"current_node_id":"node_FIXTURE"}
+{"type":"process_started","process_id":"proc_FIXTURE","pid":304}
+{"type":"input_accepted","seq":0}
+{"type":"stdout","seq":1,"data_base64":"Zmlyc3QgbGluZSByZWFkCg=="}
+{"type":"control_accepted","seq":1}
+{"type":"stdout","seq":2,"data_base64":"aGVsbG8gZnJvbSBzdGRpbgo="}
+{"type":"stderr","seq":3,"data_base64":"d2FybmluZwo="}
+{"type":"stdout","seq":4,"data_base64":"Y2Fmw6kK"}
+{"type":"process_exited","process_id":"proc_FIXTURE","exit_code":0,"status":"exited"}
+{"type":"closed","reason":"backend_closed"}
