@@ -19,6 +19,7 @@ const recorded = readFileSync(new URL("./__fixtures__/space-exec.jsonl", import.
   .split("\n")
   .map((line) => JSON.parse(line));
 
+/** Status 0 drops the connection without a reply. */
 type Reply = { status: number; body?: unknown };
 interface ApiRequest {
   method: string;
@@ -59,6 +60,7 @@ function setup(
     const reply = isCommand
       ? { status: 201, body: { attach: { url: attachUrl ?? "/v1/sessions/proc_1/attach", token: TOKEN } } }
       : api(request);
+    if (reply.status === 0) return req.socket.destroy();
     res.writeHead(reply.status, { "content-type": "application/json" }).end(JSON.stringify(reply.body ?? {}));
   });
   const wss = new WebSocketServer({ port: 0 });
@@ -343,4 +345,22 @@ test("delete: a 404 for a delete already under way waits until the sandbox is go
   });
   await space.delete("sbx_1");
   assert.equal(gets, 3);
+});
+
+test("create: a request with no reply is sent again with the same key, so SPACE returns its sandbox", async (t) => {
+  let posts = 0;
+  const accepted: string[] = [];
+  const { space, requests } = setup(t, {
+    api: (req) => {
+      if (req.method !== "POST") return { status: 200, body: operations(["succeeded"])() };
+      // The first reply is lost: the connection drops before it arrives.
+      if (++posts === 1) return { status: 0 };
+      return { status: 202, body: { operation_id: "op_1", sandbox_id: "sbx_1" } };
+    },
+  });
+  assert.deepEqual(await space.create("coding-agent:v1", never, (id) => accepted.push(id)), { id: "sbx_1" });
+  const keys = requests.filter((r) => r.method === "POST").map((r) => r.headers["idempotency-key"]);
+  assert.equal(keys.length, 2);
+  assert.equal(keys[0], keys[1]);
+  assert.deepEqual(accepted, ["sbx_1"]);
 });

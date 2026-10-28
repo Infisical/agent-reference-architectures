@@ -140,15 +140,28 @@ export function createProgress(send: (text: string) => Promise<unknown>, interva
   };
 }
 
-/** Splits `text` into messages of at most `max` characters, at a line break where one is near. */
+const FENCE = "```";
+
+/**
+ * Splits `text` into messages of at most `max` characters, at a line break where one is near.
+ * A code block cut in two is closed at the end of one message and reopened in the next.
+ */
 export function splitMessage(text: string, max = MESSAGE_MAX): string[] {
   const parts: string[] = [];
+  // Leaves room to close a fence at the end of a message, or reopen one at its start.
+  const room = max - FENCE.length - 1;
   let rest = text;
   while (rest.length > max) {
-    const newline = rest.lastIndexOf("\n", max);
-    const cut = newline > max / 2 ? newline : max;
-    parts.push(rest.slice(0, cut));
+    const newline = rest.lastIndexOf("\n", room);
+    const cut = newline > room / 2 ? newline : room;
+    let part = rest.slice(0, cut);
     rest = rest.slice(cut).replace(/^\n/, "");
+    // An odd number of fences leaves a code block open.
+    if (part.split(FENCE).length % 2 === 0) {
+      part += `\n${FENCE}`;
+      rest = `${FENCE}\n${rest}`;
+    }
+    parts.push(part);
   }
   parts.push(rest);
   return parts;

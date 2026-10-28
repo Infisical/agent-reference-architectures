@@ -379,8 +379,19 @@ test("cleanup only runs as the whole message; in a sentence it goes to the agent
 
 test("splitMessage: short text is one message; long text breaks at a line break near the limit", () => {
   assert.deepEqual(splitMessage("short", 10), ["short"]);
-  assert.deepEqual(splitMessage("aaaaaaa\nbbbbbbb", 10), ["aaaaaaa", "bbbbbbb"]);
-  assert.deepEqual(splitMessage("abcdefghijkl", 5), ["abcde", "fghij", "kl"]);
+  assert.deepEqual(splitMessage("aaaaaaa\nbbbbbbb", 12), ["aaaaaaa", "bbbbbbb"]);
+  assert.deepEqual(splitMessage("abcdefghijkl", 9), ["abcde", "fghijkl"]);
+});
+
+test("splitMessage: a code block cut in two is closed, then reopened in the next message", () => {
+  const code = Array.from({ length: 12 }, (_, i) => `line ${i}`).join("\n");
+  const parts = splitMessage(`Here:\n\`\`\`\n${code}\n\`\`\`\nDone.`, 40);
+  assert.ok(parts.length > 2);
+  for (const part of parts) {
+    assert.ok(part.length <= 40, `${JSON.stringify(part)} is over the limit`);
+    assert.equal(part.split("```").length % 2, 1, `${JSON.stringify(part)} leaves a code block open`);
+  }
+  assert.ok(parts[1].startsWith("```\n"), "the next message reopens the block");
 });
 
 test("a long answer fills the placeholder and continues in the thread", async () => {

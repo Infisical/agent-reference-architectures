@@ -64,6 +64,9 @@ type ServerFrame =
   | { type: "error"; code: string; message: string }
   | { type: "closed"; reason: string };
 
+/** Tries at the create request when no reply arrives, e.g. on a timeout. */
+const CREATE_ATTEMPTS = 3;
+
 /** Operation states that end polling in failure; anything but these and "succeeded" is in progress. */
 const FAILED_STATES = new Set(["failed", "canceled", "expired"]);
 
@@ -89,9 +92,9 @@ export function createSpace({
       } catch {}
     },
   });
-  /** A mutation. SPACE requires an Idempotency-Key on each; a fresh one per call is enough here. */
-  const mutate = <T>(method: string, path: string, signal?: AbortSignal, body?: unknown) =>
-    http<T>(method, path, { body, signal, headers: { "idempotency-key": randomUUID() } });
+  /** A mutation. SPACE requires an Idempotency-Key on each; a fresh one per call unless `key` is given. */
+  const mutate = <T>(method: string, path: string, signal?: AbortSignal, body?: unknown, key = randomUUID()) =>
+    http<T>(method, path, { body, signal, headers: { "idempotency-key": key } });
 
   /** Polls an operation until it succeeds; throws if it fails or `signal` aborts. */
   async function waitForOperation(operationId: string, signal: AbortSignal): Promise<void> {
@@ -184,19 +187,28 @@ export function createSpace({
 
   return {
     async create(template, signal, onAccepted) {
+      const body = {
+        template,
+        runtime: "firecracker",
+        metadata: { app: "atlas" },
+        ...(networkPolicy && { network_policy: networkPolicy }),
+      };
       // Not cancelled by `signal`: SPACE may already have made the VM, and only this reply names
-      // it. The request still ends within its own timeout, and the boot wait below aborts at once.
-      const { operation_id, sandbox_id } = await mutate<{ operation_id: string; sandbox_id: string }>(
-        "POST",
-        "/sandboxes",
-        undefined,
-        {
-          template,
-          runtime: "firecracker",
-          metadata: { app: "atlas" },
-          ...(networkPolicy && { network_policy: networkPolicy }),
-        },
-      );
+      // it. A request with no reply (a timeout, a dropped connection) is sent again with the same
+      // key, which gets back the sandbox SPACE made instead of a second one. The boot wait below
+      // still aborts at once.
+      const key = randomUUID();
+      let accepted: { operation_id: string; sandbox_id: string };
+      for (let attempt = 1; ; attempt++) {
+        try {
+          accepted = await mutate("POST", "/sandboxes", undefined, body, key);
+          break;
+        } catch (err) {
+          // An HTTP error is a reply: SPACE made nothing.
+          if (err instanceof HttpError || attempt >= CREATE_ATTEMPTS) throw err;
+        }
+      }
+      const { operation_id, sandbox_id } = accepted;
       onAccepted(sandbox_id);
       await waitForOperation(operation_id, signal);
       return { id: sandbox_id };
