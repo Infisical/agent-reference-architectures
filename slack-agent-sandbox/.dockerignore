@@ -1,0 +1,43 @@
+# Build context: only what the Dockerfile copies needs to be here.
+
+# Secrets and local state
+.env
+.env.*
+*.pem
+*.key
+*.crt
+secrets
+state
+
+# Git, editors, tooling
+.git
+.gitignore
+.claude
+.vscode
+.idea
+.DS_Store
+
+# Dependencies and build output (rebuilt in the image)
+node_modules
+dist
+*.tsbuildinfo
+
+# Tests and fixtures
+src/**/*.test.ts
+src/__fixtures__
+src/test-helpers
+scripts
+coverage
+
+# Temporary files and logs
+tmp
+*.tmp
+*.log
+npm-debug.log*
+
+# Docs and container files
+README.md
+docs
+Dockerfile
+.dockerignore
+docker-compose.yml
