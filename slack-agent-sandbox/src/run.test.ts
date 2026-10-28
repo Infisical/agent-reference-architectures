@@ -333,3 +333,39 @@ test("runner: refuses instructions too large to fit in one sh -c argument", () =
     /bootstrap script is \d+ characters, over 100000/,
   );
 });
+
+test("run: a queued run is told when it gets its slot; one that never waited is not", async () => {
+  const gate = deferred();
+  const { runner } = setup({
+    maxSandboxes: 1,
+    output: async function* (stdin) {
+      if (stdin.endsWith("first")) await gate.promise;
+      yield* claudeOutput([claudeResult("done")]);
+    },
+  });
+  const events: string[] = [];
+  const callbacks = (name: string) => ({
+    ...RUN,
+    onQueued: () => events.push(`${name} queued`),
+    onStarted: () => events.push(`${name} started`),
+  });
+  const first = runner.run("first", callbacks("first"));
+  const second = runner.run("second", callbacks("second"));
+  await flush();
+  assert.deepEqual(events, ["second queued"]);
+  gate.resolve();
+  await Promise.all([first, second]);
+  assert.deepEqual(events, ["second queued", "second started"]);
+});
+
+test("run: a journal error during cleanup still frees the sandbox slot", async () => {
+  const { runner, journal, logs } = setup({ maxSandboxes: 1 });
+  const remove = journal.remove;
+  journal.remove = () => {
+    throw new Error("disk full");
+  };
+  assert.equal(await runner.run("x", RUN), "done");
+  assert.ok(logs.some((m) => m.includes("cleanup failed: disk full")));
+  journal.remove = remove;
+  assert.equal(await runner.run("y", RUN), "done", "the slot came back");
+});

@@ -107,6 +107,22 @@ export function createSpace({
     }
   }
 
+  /** False once SPACE answers 404, as it does from the moment a delete succeeds. */
+  async function exists(sandboxId: string): Promise<boolean> {
+    try {
+      await http("GET", `/sandboxes/${encodeURIComponent(sandboxId)}`);
+      return true;
+    } catch (err) {
+      if (err instanceof HttpError && err.status === 404) return false;
+      throw err;
+    }
+  }
+
+  /** Polls until the sandbox is gone; throws if `signal` aborts first. */
+  async function waitUntilGone(sandboxId: string, signal: AbortSignal): Promise<void> {
+    while (await exists(sandboxId)) await sleep(pollIntervalMs, undefined, { signal });
+  }
+
   /** Resolves a command's attach URL, refusing one off the data plane, where its token would leak. */
   function attachUrl(path: string): string {
     const url = new URL(path, dataPlane);
@@ -126,6 +142,9 @@ export function createSpace({
       { command: ["sh", "-c", command], stdin: true },
     );
     const ws = new WebSocket(attachUrl(attach.url));
+    // frames() reports errors while it reads. Terminating a socket that is still connecting emits
+    // one more after it has stopped listening, which would otherwise crash the process.
+    ws.on("error", () => {});
     const send = (frame: object) => ws.send(JSON.stringify(frame));
     ws.once("open", () => send({ type: "attach", token: attach.token }));
 
@@ -165,10 +184,12 @@ export function createSpace({
 
   return {
     async create(template, signal, onAccepted) {
+      // Not cancelled by `signal`: SPACE may already have made the VM, and only this reply names
+      // it. The request still ends within its own timeout, and the boot wait below aborts at once.
       const { operation_id, sandbox_id } = await mutate<{ operation_id: string; sandbox_id: string }>(
         "POST",
         "/sandboxes",
-        signal,
+        undefined,
         {
           template,
           runtime: "firecracker",
@@ -183,16 +204,7 @@ export function createSpace({
 
     exec,
 
-    /** False once SPACE answers 404, as it does from the moment a delete succeeds. */
-    async exists(sandboxId) {
-      try {
-        await http("GET", `/sandboxes/${encodeURIComponent(sandboxId)}`);
-        return true;
-      } catch (err) {
-        if (err instanceof HttpError && err.status === 404) return false;
-        throw err;
-      }
-    },
+    exists,
 
     async delete(sandboxId) {
       let operationId: string;
@@ -202,9 +214,11 @@ export function createSpace({
           `/sandboxes/${encodeURIComponent(sandboxId)}`,
         ));
       } catch (err) {
-        // Already gone: deleted earlier, or its create failed before it existed.
-        if (err instanceof HttpError && err.status === 404) return;
-        throw err;
+        if (!(err instanceof HttpError && err.status === 404)) throw err;
+        // Gone, or a delete accepted earlier (SPACE answers a new key with 404 then) still running.
+        // Only the sandbox's own 404 says which, so a failed delete stays failed and journaled.
+        await waitUntilGone(sandboxId, AbortSignal.timeout(deleteTimeoutMs));
+        return;
       }
       await waitForOperation(operationId, AbortSignal.timeout(deleteTimeoutMs));
     },

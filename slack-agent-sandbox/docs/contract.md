@@ -68,7 +68,7 @@ Observed:
 
 ## 3. Agent Vault sessions
 
-`src/vault.ts` implements this, and `npm run smoke -- --preflight` exercises it:
+`src/vault.ts` implements this, and `npm run smoke -- --preflight --ungranted-bundle <slug>` exercises it:
 
 - `POST /api/v1/auth/universal-auth/login` `{clientId, clientSecret}` returns `{accessToken, expiresIn, ...}`.
 - `POST /api/v1/agent-vault/sessions` `{accessBundles: ["<slug>"], ttl: "15m"}` returns `{session: {id, token, expiresAt, createdAt, accessBundles: [{id, name, position}]}}`. The token starts `agv_` and is returned only here.

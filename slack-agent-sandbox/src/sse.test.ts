@@ -40,3 +40,9 @@ test("parseSse: a multi-byte character split across chunks decodes intact", asyn
 test("parseSse: drops an event cut off before its blank line", async () => {
   assert.deepEqual(await collect(parseSse(chunks("data: done\n\n", "data: cut"))), [{ event: "message", data: "done" }]);
 });
+
+test("line splitter: a line past the limit throws instead of growing without end", () => {
+  const lines = createLineSplitter(8);
+  assert.deepEqual(lines.push("12345678\n1234"), ["12345678"]);
+  assert.throws(() => lines.push("56789"), /output line over 8 characters/);
+});

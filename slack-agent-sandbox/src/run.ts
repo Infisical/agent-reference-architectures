@@ -16,6 +16,7 @@ export interface SandboxApi {
   /**
    * Creates a sandbox from the template and resolves once it accepts commands. `onAccepted` gets
    * the ID as soon as SPACE assigns it, before the VM boots, so a crash while it boots can't lose it.
+   * An abort before then still waits for that ID, so a sandbox SPACE made is never left untracked.
    */
   create(template: string, signal: AbortSignal, onAccepted: (sandboxId: string) => void): Promise<{ id: string }>;
   /** Runs `command` with `stdin` written and then closed, streaming its output until it exits. */
@@ -156,6 +157,8 @@ export interface RunCallbacks {
   onEvent?: (event: HarnessEvent) => void;
   /** Called when every sandbox slot is taken and this run has to wait. */
   onQueued?: () => void;
+  /** Called when a run that had to wait gets its slot. */
+  onStarted?: () => void;
   /** Called with the run's resource IDs each time one is created, before any cleanup. */
   onResources?: (ids: Pick<RunRecord, "sessionId" | "sandboxId">) => void;
   /** Called with the answer as soon as the agent has exited with one, before the cleanup. */
@@ -171,6 +174,8 @@ export interface RunOptions extends RunCallbacks {
 }
 
 const STDERR_TAIL_CHARS = 2000;
+/** The longest line of agent output the runner buffers; a longer one fails the run. */
+const MAX_LINE_CHARS = 16 * 1024 * 1024;
 const CLEANUP_ATTEMPTS = 3;
 /** Session lifetime beyond the run timeout, so it can't expire under a run that's still allowed. */
 const SESSION_TTL_MARGIN_MS = 5 * 60 * 1000;
@@ -240,7 +245,7 @@ export function createRunner({
     onEvent?: RunCallbacks["onEvent"],
   ) {
     const scrub = (text: string) => text.replaceAll(token, "[session token]");
-    const lines = createLineSplitter();
+    const lines = createLineSplitter(MAX_LINE_CHARS);
     let stderr = "";
     let exitCode: number | undefined;
     let final: Extract<HarnessEvent, { type: "final" }> | undefined;
@@ -286,11 +291,16 @@ export function createRunner({
    * The token lives only in locals: never logged, journaled or sent as an argument, and masked
    * in the agent's output before any of it leaves the runner.
    */
-  async function run(prompt: string, { accessBundles, onEvent, onQueued, onResources, onAnswer }: RunOptions): Promise<string> {
+  async function run(prompt: string, { accessBundles, onEvent, onQueued, onStarted, onResources, onAnswer }: RunOptions): Promise<string> {
     if (shuttingDown) throw new Error("shutting down");
     if (!accessBundles.length) throw new Error("a run needs at least one access bundle");
     const clock = createStopwatch();
-    const release = await limiter.acquire(onQueued);
+    let queued = false;
+    const release = await limiter.acquire(() => {
+      queued = true;
+      onQueued?.();
+    });
+    if (queued) onStarted?.();
     clock.lap("wait for slot");
     // The agent's own timings, for the log line written once the run is cleaned up.
     let own = "";
@@ -339,7 +349,12 @@ export function createRunner({
         throw controller.signal.aborted ? controller.signal.reason : err;
       } finally {
         clearTimeout(timer);
-        await cleanup(record);
+        try {
+          await cleanup(record);
+        } catch (err) {
+          // A journal write that failed, say. The slot must come back regardless.
+          log(`Run ${record.runId} cleanup failed: ${err instanceof Error ? err.message : err}`);
+        }
         clock.lap("cleanup");
         release();
         log(`run ${record.runId} timings: ${clock}${own ? ` (${own})` : ""}`);

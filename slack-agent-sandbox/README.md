@@ -80,6 +80,7 @@ With the template cached on the node, a sandbox boots in 1 to 3 seconds.
 - An Agent Vault [proxy](https://infisical.com/docs/documentation/platform/agent-vault/proxies) on the same private network as SPACE, with **Traffic Policy** set to **Access bundle hosts only**, and its CA fingerprint from the proxy's row on the Agent Vault **Proxies** page. Never take the fingerprint from what the address serves.
 - An [access bundle](https://infisical.com/docs/documentation/platform/agent-vault/access-bundles) with an Anthropic service (`api.anthropic.com`) and any other APIs the agent should reach.
 - An Infisical [machine identity](https://infisical.com/docs/documentation/platform/identities/machine-identities) with Universal Auth that is a **plain Agent Vault Member** granted only that access bundle. An Agent Vault Admin can mint sessions over any access bundle, which defeats the point.
+- For the smoke test's preflight, a second access bundle that the identity is **not** granted.
 - A Slack app. [docs/slack-app.md](docs/slack-app.md) has the manifest. Use a separate dev app locally.
 
 ## The sandbox template
@@ -113,7 +114,7 @@ Build it with SPACE's template tooling ([Kind runbook](https://github.com/perple
 3. Check SPACE, Agent Vault and the sandbox network without Slack. `--preflight` runs no inference; the second command runs one paid Claude Code call:
 
    ```bash
-   npm run smoke -- --preflight
+   npm run smoke -- --preflight --ungranted-bundle <slug>
    npm run smoke -- --expect AGENT_VAULT_OK "Reply with AGENT_VAULT_OK"
    ```
 
@@ -161,10 +162,10 @@ All configuration is environment variables, read from `.env.local` when present.
 ```bash
 npm run smoke -- "Reply with AGENT_VAULT_OK"                     # one paid run
 npm run smoke -- --expect AGENT_VAULT_OK "Reply with AGENT_VAULT_OK"
-npm run smoke -- --preflight                                      # no inference
+npm run smoke -- --preflight --ungranted-bundle <slug>            # no inference
 ```
 
-`--preflight` mints, reads and revokes a session, confirms that an ungranted access bundle is refused, and runs a probe in the VM instead of Claude Code to check the proxy, CA pin and network. Smoke runs keep their own journal under `STATE_DIR/smoke`, so they never touch a running bot's records. Session tokens and identity credentials are never printed.
+`--preflight` mints, reads and revokes a session, confirms that the access bundle named by `--ungranted-bundle` is refused, and runs a probe in the VM instead of Claude Code to check the proxy, CA pin and network. Create that bundle and leave the identity ungranted: Infisical refuses a bundle that doesn't exist the same way, so a made-up name proves nothing. Smoke runs keep their own journal under `STATE_DIR/smoke`, so they never touch a running bot's records. Session tokens and identity credentials are never printed.
 
 ## Development
 

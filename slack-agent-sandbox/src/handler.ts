@@ -72,6 +72,8 @@ export interface HandlerOptions {
 
 const DETAIL_MAX = 100;
 const NARRATION_MAX = 200;
+/** Characters per reply message. Slack rejects text over 40,000 and advises staying under 4,000. */
+const MESSAGE_MAX = 4000;
 
 /** Escapes Slack's control characters, so agent text can't post a mention like <!channel>. */
 const escapeSlack = (text: string) => text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
@@ -136,6 +138,20 @@ export function createProgress(send: (text: string) => Promise<unknown>, interva
       await sending;
     },
   };
+}
+
+/** Splits `text` into messages of at most `max` characters, at a line break where one is near. */
+export function splitMessage(text: string, max = MESSAGE_MAX): string[] {
+  const parts: string[] = [];
+  let rest = text;
+  while (rest.length > max) {
+    const newline = rest.lastIndexOf("\n", max);
+    const cut = newline > max / 2 ? newline : max;
+    parts.push(rest.slice(0, cut));
+    rest = rest.slice(cut).replace(/^\n/, "");
+  }
+  parts.push(rest);
+  return parts;
 }
 
 /** How Slack writes a mention of a user in message text. */
@@ -218,16 +234,31 @@ export function createHandler({
     log(`run: thread=${key}${isThreadReply ? " (with thread history)" : ""}`);
 
     const progress = createProgress((text) => slack.update({ channel, ts: placeholderTs, text }), progressIntervalMs);
-    /** Replaces the placeholder with the reply, once: from onAnswer, or after the run for a runner that doesn't call it. */
+    /**
+     * Replaces the placeholder with the reply, once: from onAnswer, or after the run for a runner
+     * that doesn't call it. A long reply continues in follow-up messages in the thread.
+     */
     let posted: Promise<void> | undefined;
     const postReply = (text: string) =>
       (posted ??= (async () => {
         // Lands any edit in flight first, so it can't overwrite the reply.
         await progress.close();
+        const [first, ...more] = splitMessage(text.trim() ? text : NO_ANSWER_REPLY);
         try {
-          await slack.update({ channel, ts: placeholderTs, text: text.trim() ? text : NO_ANSWER_REPLY });
+          await slack.update({ channel, ts: placeholderTs, text: first });
         } catch (err) {
           log(`Failed to post reply on ${key}: ${err}`);
+          // Never leave the placeholder showing progress for a run that has ended.
+          await slack.update({ channel, ts: placeholderTs, text: ERROR_REPLY }).catch(() => {});
+          return;
+        }
+        for (const part of more) {
+          try {
+            await postInThread(message, part);
+          } catch (err) {
+            log(`Failed to post the rest of the reply on ${key}: ${err}`);
+            return;
+          }
         }
       })());
 
@@ -236,6 +267,7 @@ export function createHandler({
       const answer = await runner.run(prompt, {
         accessBundles,
         onQueued: () => progress.set(QUEUED_TEXT),
+        onStarted: () => progress.set(THINKING_TEXT),
         onEvent: (event) => {
           if (event.type === "narration") {
             // Shown only with the next tool call: text with no tool after it is the answer.
@@ -332,13 +364,20 @@ export function createHandler({
     // Checked per message, not per thread: joining an allowed user's thread doesn't grant access.
     // Started on arrival so a refusal doesn't wait for a run in progress; allowed messages still
     // take their place in the queue, keeping the thread's order.
-    const allowed = isAllowed(message.user).then(async (ok) => {
-      if (!ok) {
-        log(`Denied ${message.user ?? "unknown user"} on ${key}`);
-        await postInThread(message, NOT_ALLOWED_REPLY);
-      }
-      return ok;
-    });
+    // Never rejects: nothing awaits it until the thread's earlier messages are done, so a
+    // rejection here would go unhandled and stop the process.
+    const allowed = isAllowed(message.user)
+      .then(async (ok) => {
+        if (!ok) {
+          log(`Denied ${message.user ?? "unknown user"} on ${key}`);
+          await postInThread(message, NOT_ALLOWED_REPLY).catch((err) => log(`Failed to post refusal on ${key}: ${err}`));
+        }
+        return ok;
+      })
+      .catch((err) => {
+        log(`Access check failed on ${key}: ${err}`);
+        return false;
+      });
 
     return enqueue(key, async () => {
       if (!(await allowed)) return;

@@ -317,3 +317,30 @@ test("delete: waits for the operation, and treats a sandbox that's already gone 
   const broken = setup(t, { api: () => ({ status: 500, body: { code: "internal", message: "boom", request_id: "req_1" } }) });
   await assert.rejects(broken.space.delete("sbx_1"), /HTTP 500 internal: boom/);
 });
+
+test("create: an abort while the create is in flight still reports the sandbox SPACE made", async (t) => {
+  const controller = new AbortController();
+  const accepted: string[] = [];
+  const { space } = setup(t, {
+    api: (req) => {
+      if (req.method !== "POST") return { status: 200, body: operations(["running"])() };
+      controller.abort(new Error("session refused"));
+      return { status: 202, body: { operation_id: "op_1", sandbox_id: "sbx_1" } };
+    },
+  });
+  // The run reports its own abort reason; here it's enough that the boot wait stops.
+  await assert.rejects(space.create("coding-agent:v1", controller.signal, (id) => accepted.push(id)));
+  assert.deepEqual(accepted, ["sbx_1"]);
+});
+
+test("delete: a 404 for a delete already under way waits until the sandbox is gone", async (t) => {
+  let gets = 0;
+  const { space } = setup(t, {
+    api: (req) => {
+      if (req.method === "DELETE") return { status: 404, body: { code: "not_found", message: "not found" } };
+      return ++gets < 3 ? { status: 200, body: { id: "sbx_1", state: "deleting" } } : { status: 404 };
+    },
+  });
+  await space.delete("sbx_1");
+  assert.equal(gets, 3);
+});

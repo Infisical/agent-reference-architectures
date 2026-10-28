@@ -3,7 +3,7 @@
  *
  *   npm run smoke -- "Reply with AGENT_VAULT_OK"            one paid Claude Code run
  *   npm run smoke -- --expect AGENT_VAULT_OK "Reply with AGENT_VAULT_OK"
- *   npm run smoke -- --preflight                             no inference: session API and VM network checks
+ *   npm run smoke -- --preflight --ungranted-bundle <slug>   no inference: session API and VM network checks
  *
  * Reads .env.local (see .env.example). Each run mints a short-lived Agent Vault session over
  * AGENT_VAULT_ACCESS_BUNDLE, runs in a fresh sandbox, and always revokes the session and deletes
@@ -37,7 +37,9 @@ const { values: flags, positionals } = parseArgs({
     preflight: { type: "boolean", default: false },
     expect: { type: "string" },
     timeout: { type: "string" },
-    "ungranted-bundle": { type: "string", default: "atlas-smoke-ungranted" },
+    // An existing access bundle the identity isn't granted. A made-up name proves nothing: Infisical
+    // refuses a missing bundle exactly as it refuses an ungranted one.
+    "ungranted-bundle": { type: "string" },
   },
 });
 
@@ -48,6 +50,10 @@ const log = (message: string) => console.log(redact(message));
 const accessBundles = [config.vault.defaultAccessBundle];
 const timeoutMs = Number(flags.timeout ?? (flags.preflight ? 3 : 5) * 60_000);
 if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) throw new Error(`--timeout must be milliseconds, got ${flags.timeout}`);
+const ungrantedBundle = flags["ungranted-bundle"];
+if (flags.preflight && !ungrantedBundle) {
+  throw new Error("--preflight needs --ungranted-bundle <slug>: an existing access bundle the identity isn't granted");
+}
 const prompt = positionals.join(" ").trim() || (flags.preflight ? "preflight" : "");
 if (!prompt) throw new Error('Pass a prompt, e.g. npm run smoke -- "Reply with AGENT_VAULT_OK", or --preflight');
 
@@ -89,11 +95,11 @@ await runner.recover();
 
 if (flags.preflight) {
   log(`Session API: minting a 1-minute session over [${accessBundles}]`);
-  const api = await checkSessionApi(vault, accessBundles, flags["ungranted-bundle"]);
+  const api = await checkSessionApi(vault, accessBundles, ungrantedBundle!);
   log(
     api.problems.length
       ? `Session API FAILED: ${api.problems.join("; ")}`
-      : `Session API: ok (session ${api.sessionId} minted, read, revoked twice; '${flags["ungranted-bundle"]}' refused)`,
+      : `Session API: ok (session ${api.sessionId} minted, read, revoked twice; '${ungrantedBundle}' refused)`,
   );
   problems.push(...api.problems);
 }

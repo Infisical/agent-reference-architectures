@@ -118,6 +118,8 @@ export interface VaultApi {
  * Exercises the session API with a one-minute session: mint, read it back active with the
  * requested bundles, revoke, read it back revoked, revoke again (idempotent). Then asks for
  * `ungrantedBundle` and expects Infisical to refuse it; a session it grants anyway is revoked.
+ * Infisical refuses a bundle that doesn't exist the same way, so `ungrantedBundle` must be a real
+ * bundle the identity isn't granted, or the check proves nothing.
  */
 export async function checkSessionApi(vault: VaultApi, accessBundles: string[], ungrantedBundle: string) {
   const { problems, fail } = problemList();

@@ -1,8 +1,9 @@
 /**
  * Splits text that arrives in arbitrary chunks into lines. A stream chunk can end mid-line, or
- * between the \r and \n of a CRLF, so the unfinished tail waits for the next chunk.
+ * between the \r and \n of a CRLF, so the unfinished tail waits for the next chunk. A tail longer
+ * than `maxLineChars` throws, so output that never breaks a line can't grow without limit.
  */
-export function createLineSplitter() {
+export function createLineSplitter(maxLineChars = Infinity) {
   let buffer = "";
   // buffer[0, scanned) is known to hold no line break, so a long line split over many chunks
   // isn't rescanned from its start on every chunk.
@@ -25,6 +26,7 @@ export function createLineSplitter() {
       }
       buffer = buffer.slice(start);
       scanned = i - start;
+      if (buffer.length > maxLineChars) throw new Error(`output line over ${maxLineChars} characters`);
       return lines;
     },
     /** The last line, if the stream didn't end with a line break. */

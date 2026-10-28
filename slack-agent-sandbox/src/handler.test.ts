@@ -10,6 +10,7 @@ import {
   NOT_ALLOWED_REPLY,
   progressText,
   QUEUED_TEXT,
+  splitMessage,
   THINKING_TEXT,
   type HandlerOptions,
 } from "./handler.js";
@@ -374,4 +375,59 @@ test("cleanup only runs as the whole message; in a sentence it goes to the agent
   await handler.handle(mention("how do I cleanup old secrets?"));
   assert.equal(runner.calls.length, 1);
   assert.equal(slack.deletes.length, 0);
+});
+
+test("splitMessage: short text is one message; long text breaks at a line break near the limit", () => {
+  assert.deepEqual(splitMessage("short", 10), ["short"]);
+  assert.deepEqual(splitMessage("aaaaaaa\nbbbbbbb", 10), ["aaaaaaa", "bbbbbbb"]);
+  assert.deepEqual(splitMessage("abcdefghijkl", 5), ["abcde", "fghij", "kl"]);
+});
+
+test("a long answer fills the placeholder and continues in the thread", async () => {
+  const answer = `${"a".repeat(3000)}\n${"b".repeat(3000)}`;
+  const { slack, handler } = setup(() => answer);
+  await handler.handle(msg("go"));
+  assert.equal(slack.updates.at(-1)?.text, "a".repeat(3000));
+  assert.deepEqual(slack.posts.at(-1), { channel: "D1", thread_ts: "100.1", text: "b".repeat(3000) });
+});
+
+test("an answer Slack rejects leaves the error reply, not the progress text", async () => {
+  const { slack, handler } = setup(() => "rejected");
+  const update = slack.update.bind(slack);
+  slack.update = async (args) => {
+    if (args.text === "rejected") throw new Error("msg_too_long");
+    return update(args);
+  };
+  await handler.handle(msg("go"));
+  assert.equal(slack.updates.at(-1)?.text, ERROR_REPLY);
+});
+
+test("a refusal that fails to post while the thread is busy doesn't reject unhandled", async () => {
+  const unhandled: unknown[] = [];
+  const onUnhandled = (err: unknown) => unhandled.push(err);
+  process.on("unhandledRejection", onUnhandled);
+  try {
+    const gate = deferred();
+    const { slack, handler } = setup(
+      async () => {
+        await gate.promise;
+        return "ok";
+      },
+      async (user) => user === "U1",
+    );
+    const post = slack.postMessage.bind(slack);
+    slack.postMessage = async (args) => {
+      if (args.text === NOT_ALLOWED_REPLY) throw new Error("channel_not_found");
+      return post(args);
+    };
+
+    const first = handler.handle({ ...msg("hi"), user: "U1" });
+    const denied = handler.handle({ ...msg("me too", "100.1", true), user: "U2" });
+    await new Promise((resolve) => setImmediate(resolve));
+    gate.resolve();
+    await Promise.all([first, denied]);
+    assert.deepEqual(unhandled, []);
+  } finally {
+    process.off("unhandledRejection", onUnhandled);
+  }
 });
