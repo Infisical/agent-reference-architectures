@@ -1,0 +1,24 @@
+# Apollo on its host. Outbound connections only, so no ports are published.
+# Configuration comes from .env next to this file (see .env.example and docs/deploy.md).
+services:
+  apollo:
+    build: .
+    image: apollo:latest
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      # The crash-recovery journal (STATE_DIR's default): run records the next start cleans up.
+      - state:/app/state
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    # SIGTERM aborts runs in progress, revokes their sessions and deletes their sandboxes.
+    stop_grace_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+
+volumes:
+  state:
