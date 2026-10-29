@@ -40,7 +40,7 @@ One line per run: the thread, the run, session and sandbox IDs, and step timings
 
 ## Testing the container locally
 
-Use the dev Slack app and `.env.local`, as for `npm run start:slack`, and stop any local `npm run start:slack` first: Slack hands each event to one of the open Socket Mode connections, so two processes on the same app split the messages. Use a different `MODAL_APP_NAME` from any deployed bot, or the two will sweep each other's sandboxes.
+Use the dev Slack app and `.env.local`, as for `npm run start:slack`, and stop any local `npm run start:slack` first: Slack hands each event to one of the open Socket Mode connections, so two processes on the same app split the messages.
 
 ```bash
 docker build -t apollo .
@@ -55,7 +55,13 @@ docker run --rm --name apollo-local \
 
 ## Agent Proxy on Modal
 
-Every sandbox runs its own Agent Proxy, as a sidecar container next to the agent's ([contract section 5](contract.md#5-network)). All of them are copies of one enrolled proxy: its enrollment and CA live on the Modal Volume `agent-proxy-state`, which each sidecar mounts read-only and copies before starting. Nothing runs between runs. Enroll once, before starting the bot:
+Every sandbox runs its own Agent Proxy, as a sidecar container next to the agent's ([contract section 5](contract.md#5-network)). All of them are copies of one enrolled proxy: its enrollment and CA live on the Modal Volume `agent-proxy-state`, which each sidecar mounts read-only and copies before starting. Nothing runs between runs. Enroll once, before starting the bot.
+
+The secret, the Volume and the bot must all be in the same Modal environment. The Modal CLI uses the profile's environment unless told otherwise, while the bot uses `MODAL_ENVIRONMENT` from its own configuration, so if you set `MODAL_ENVIRONMENT` in `.env.local`, export the same value in the shell you run these commands from (the CLI reads it too), and create the secret in that environment in the dashboard:
+
+```bash
+export MODAL_ENVIRONMENT=<the value from .env.local>   # skip if the bot uses the default environment
+```
 
 1. **Create the proxy in Infisical**: Agent Vault, Proxies, create one, and copy its one-time enrollment token (it expires in an hour). Make sure the access bundle in `AGENT_VAULT_ACCESS_BUNDLE` can be used through it.
 2. **Store the token in Modal**: a secret named `agent-proxy` with `INFISICAL_AGENT_VAULT_ENROLLMENT_TOKEN`, created in the Modal dashboard so the token stays out of shell history.
@@ -81,7 +87,7 @@ The Volume holds the proxy's credentials (an access token that stays valid until
 - **Inbound**: none for the app. Allow SSH only from admin addresses.
 - **Outbound**: HTTPS to Slack (`slack.com`, and `wss-primary.slack.com` for Socket Mode), to `INFISICAL_DOMAIN` (`app.infisical.com`), to Modal's API (`api.modal.com`), and to Docker Hub and the npm registry for builds.
 - **Agent Proxy**: a sidecar in every sandbox ([above](#agent-proxy-on-modal)). The bot only talks to Modal's API; the agent reaches the proxy inside its own sandbox.
-- **One instance per Slack app and Modal App**: a second instance would split Slack's events, and its startup sweep would terminate the first one's sandboxes.
+- **One instance per Slack app**: a second instance would split Slack's events.
 
 ### Credentials
 
@@ -94,7 +100,7 @@ The Volume holds the proxy's credentials (an access token that stays valid until
 
 The journal in `STATE_DIR` holds only the session and sandbox IDs of runs in progress, written the moment each exists and removed after cleanup. It must survive container recreation and image updates, which the named volume `state` does.
 
-If the host itself is lost, so is the journal. The cost is bounded: an orphaned session expires with its TTL (run timeout plus 5 minutes), and an orphaned sandbox is terminated by Modal at its own timeout, or by the next start's sweep.
+If the host itself is lost, so is the journal. The cost is bounded: an orphaned session expires with its TTL (run timeout plus 5 minutes), and an orphaned sandbox is terminated by Modal at its own timeout. A new host gets a new instance ID, so its sweep doesn't find the old host's sandboxes.
 
 ### Restart behavior and monitoring
 

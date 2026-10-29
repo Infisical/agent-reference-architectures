@@ -6,6 +6,7 @@ import {
   createProgress,
   EMPTY_MESSAGE_REPLY,
   ERROR_REPLY,
+  muteMentions,
   NO_ANSWER_REPLY,
   NOT_ALLOWED_REPLY,
   progressText,
@@ -385,4 +386,17 @@ test("a refusal that fails to post while the thread is busy doesn't reject unhan
   } finally {
     process.off("unhandledRejection", onUnhandled);
   }
+});
+
+test("muteMentions: channel, here, user group and user mentions become text; links still work", () => {
+  assert.equal(
+    muteMentions("<!channel> <!here> <!subteam^S1> <@U1> see <https://example.com|docs>"),
+    "&lt;!channel> &lt;!here> &lt;!subteam^S1> &lt;@U1> see <https://example.com|docs>",
+  );
+});
+
+test("a mention in the answer is posted as text", async () => {
+  const { slack, handler } = setup(() => "<!channel> done");
+  await handler.handle(msg("go"));
+  assert.equal(slack.updates.at(-1)?.text, "&lt;!channel> done");
 });

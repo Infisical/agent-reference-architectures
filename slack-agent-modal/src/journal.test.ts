@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { createJournal } from "./journal.js";
+import { createJournal, loadInstanceId } from "./journal.js";
 import { tempDir as makeTempDir } from "./test-helpers/fakes.js";
 
 const tempDir = () => makeTempDir("journal-");
@@ -36,4 +36,12 @@ test("list skips unreadable files and leftover temp files", () => {
 
 test("remove of a missing record is a no-op", () => {
   assert.doesNotThrow(() => createJournal(tempDir()).remove("nope"));
+});
+
+test("loadInstanceId: made once, then the same after a restart; another directory gets its own", () => {
+  const dir = tempDir();
+  const id = loadInstanceId(dir);
+  assert.equal(loadInstanceId(dir), id);
+  assert.notEqual(loadInstanceId(join(dir, "smoke")), id);
+  assert.ok(createJournal(dir).list().length === 0, "the ID file isn't read as a run record");
 });

@@ -21,7 +21,7 @@ The API shapes and behavior Apollo depends on. `src/modal.ts` implements them fr
 Not yet verified:
 
 - **Create time**: cold (first build or uncached image) and warm. SPACE booted in 1 to 3 s with the template cached.
-- **No accepted state**: create resolves only once the sandbox runs and can't be cancelled, so the ID is journaled after boot. A crash during create leaves a sandbox the journal never saw; the next start's sweep (by role tag) and the sandbox `timeoutMs` (run timeout plus 5 minutes) cover it.
+- **No accepted state**: create resolves only once the sandbox runs and can't be cancelled, so the ID is journaled after boot. A crash during create leaves a sandbox the journal never saw; the next start's sweep (by role and instance tag) and the sandbox `timeoutMs` (run timeout plus 5 minutes) cover it.
 - **`fromId` on a terminated sandbox**: whether it throws `NotFoundError` or returns a handle whose `poll()` gives an exit code. `exists` and `delete` handle both.
 - **`terminate` twice** is harmless.
 - **Idle timeout** (5 minutes) doesn't fire during a long silent agent turn while an exec is running.

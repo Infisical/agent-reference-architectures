@@ -17,7 +17,7 @@ import { parseArgs } from "node:util";
 import { config as loadDotenv } from "dotenv";
 import { createClaudeHarness } from "../src/claude.js";
 import { loadConfig } from "../src/config.js";
-import { createJournal } from "../src/journal.js";
+import { createJournal, loadInstanceId } from "../src/journal.js";
 import { createRunner } from "../src/run.js";
 import {
   checkProbe,
@@ -59,14 +59,15 @@ if (!prompt) throw new Error('Pass a prompt, e.g. npm run smoke -- "Reply with A
 
 const instructions = readFileSync("instructions/AGENTS.md", "utf8");
 const vault = createVault(config.vault);
-// Sandboxes reach Agent Proxy and nothing public, and get their own role, so a bot's startup sweep
-// never terminates a smoke run.
+// Sandboxes reach Agent Proxy and nothing public, and get their own role and instance, so neither a
+// bot's startup sweep nor another machine's smoke run terminates them.
 const network = proxyFor(config.vault.proxy);
 const sandboxes = createModal({
   ...config.modal,
   client: createModalClient(config.modal),
   network,
   role: "smoke",
+  instance: loadInstanceId(join(config.stateDir, "smoke")),
   runTimeoutMs: timeoutMs,
 });
 // Resolved (or built) while the session checks run.

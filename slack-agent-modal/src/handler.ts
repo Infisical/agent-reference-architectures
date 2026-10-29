@@ -66,6 +66,13 @@ const MESSAGE_MAX = 4000;
 /** Escapes Slack's control characters, so agent text can't post a mention like <!channel>. */
 const escapeSlack = (text: string) => text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 
+/**
+ * Stops the agent's answer from notifying anyone: `<!channel>`, `<!here>`, `<!everyone>`, a user
+ * group or `<@user>` is shown as text. Links (`<https://...|label>`), which the agent is told to
+ * write, still work. Its input can be untrusted, so a prompt injection could ask for a mention.
+ */
+export const muteMentions = (text: string) => text.replace(/<(?=[!@])/g, "&lt;");
+
 /** One line, at most `max` characters, safe to put in a Slack message. */
 const brief = (text: string, max: number) => {
   const line = text.replace(/\s+/g, " ").trim();
@@ -243,7 +250,7 @@ export function createHandler({
       (posted ??= (async () => {
         // Lands any edit in flight first, so it can't overwrite the reply.
         await progress.close();
-        const [first, ...more] = splitMessage(text.trim() ? text : NO_ANSWER_REPLY);
+        const [first, ...more] = splitMessage(text.trim() ? muteMentions(text) : NO_ANSWER_REPLY);
         try {
           await slack.update({ channel, ts: placeholderTs, text: first });
         } catch (err) {

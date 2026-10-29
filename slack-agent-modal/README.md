@@ -152,7 +152,7 @@ npm run smoke -- --expect AGENT_VAULT_OK "Reply with AGENT_VAULT_OK"
 npm run smoke -- --preflight --ungranted-bundle <slug>            # no inference
 ```
 
-`--preflight` mints, reads and revokes a session, confirms that the access bundle named by `--ungranted-bundle` is refused, and runs a probe in the sandbox instead of Claude Code to check the proxy, CA pin, network and that the agent isn't root. Create that bundle and leave the identity ungranted: Infisical refuses a bundle that doesn't exist the same way, so a made-up name proves nothing. Smoke runs keep their own journal under `STATE_DIR/smoke` and tag their sandboxes `role=smoke`, so they never touch a running bot's records and the bot's sweep never touches them (two smoke runs at once would sweep each other's sandboxes, as they already share a journal). Session tokens and identity credentials are never printed.
+`--preflight` mints, reads and revokes a session, confirms that the access bundle named by `--ungranted-bundle` is refused, and runs a probe in the sandbox instead of Claude Code to check the proxy, CA pin, network and that the agent isn't root. Create that bundle and leave the identity ungranted: Infisical refuses a bundle that doesn't exist the same way, so a made-up name proves nothing. Smoke runs keep their own journal under `STATE_DIR/smoke` and tag their sandboxes `role=smoke` with that directory's instance ID, so they never touch a running bot's records and the bot's sweep never touches them (two smoke runs at once from the same checkout would sweep each other's sandboxes, as they already share a journal). Session tokens and identity credentials are never printed.
 
 ## Development
 

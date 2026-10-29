@@ -8,7 +8,7 @@ import { RESOURCE_MARGIN_MS, type ExecEvent, type SandboxApi } from "./run.js";
 
 /**
  * Modal Sandboxes behind the runner's SandboxApi, as described in docs/contract.md. Every sandbox
- * lives in one Modal App, is tagged with its `role` so leaks can be found and swept, and gets
+ * lives in one Modal App, is tagged with its `role` and `instance` so leaks can be found and swept, and gets
  * `network` (from proxyFor): its egress and, for a Volume proxy, an Agent Proxy sidecar. The Agent
  * Vault token reaches the sandbox only on a command's stdin: Modal shows a command's argv in its
  * dashboard, so nothing secret goes there.
@@ -22,6 +22,11 @@ export interface ModalOptions {
    * touches a smoke run's.
    */
   role: "bot" | "smoke";
+  /**
+   * Who owns the sandboxes, from loadInstanceId on the journal's directory. The sweep terminates
+   * only this instance's, so a second bot or smoke run on the same App keeps its sandboxes.
+   */
+  instance: string;
   /** The runner's timeout. Each sandbox lives this plus RESOURCE_MARGIN_MS, then Modal ends it. */
   runTimeoutMs: number;
   cpu: number;
@@ -109,12 +114,13 @@ export function createModal({
   client: modal,
   appName,
   role,
+  instance,
   runTimeoutMs,
   cpu,
   memoryMiB,
   network: { outboundCidrAllowlist, proxyVolume },
 }: ModalOptions): ModalSandboxes {
-  const tags = { app: "apollo", role };
+  const tags = { app: "apollo", role, instance };
   // Handles for sandboxes this process created: one from create already knows its task, so exec
   // on it skips the wait for the task ID that a handle from fromId pays.
   const handles = new Map<string, Sandbox>();
@@ -168,8 +174,13 @@ export function createModal({
     );
 
     const events = createChannel<ExecEvent>();
+    // Stops reading once the runner stops consuming, as after an abort, so a process that keeps
+    // writing until the sandbox is terminated doesn't fill the bot's memory.
     const pump = async (type: "stdout" | "stderr", stream: AsyncIterable<string>) => {
-      for await (const data of stream) if (data) events.push({ type, data });
+      for await (const data of stream) {
+        if (events.ended) return;
+        if (data) await events.push({ type, data });
+      }
     };
     // The process blocks reading stdin until it arrives, so it all goes in at once, then EOF.
     const writeStdin = async () => {
@@ -280,23 +291,63 @@ async function wrap<T>(op: string, task: () => Promise<T>): Promise<T> {
   }
 }
 
+/** Items a channel holds before `push` waits for the consumer to catch up. */
+const CHANNEL_LIMIT = 256;
+
 /**
  * A queue between producers and one async-iterating consumer. `drain` yields items in order,
  * then throws the error `close` was given, if any. Aborting its signal rejects with the reason.
+ * `push` resolves once there is room, so a fast producer can't outrun the consumer without
+ * limit. Once `drain` exits, the channel has `ended`: queued items are dropped and pushes ignored.
  */
-function createChannel<T>() {
+export function createChannel<T>(limit = CHANNEL_LIMIT) {
   const items: T[] = [];
   let closed = false;
+  let ended = false;
   let error: unknown;
   let wake: (() => void) | undefined;
+  let waiting: (() => void)[] = [];
   const notify = () => {
     wake?.();
     wake = undefined;
   };
+  const makeRoom = () => {
+    const resume = waiting;
+    waiting = [];
+    for (const resolve of resume) resolve();
+  };
+  async function* read(signal: AbortSignal): AsyncGenerator<T> {
+    for (;;) {
+      signal.throwIfAborted();
+      if (items.length) {
+        const item = items.shift()!;
+        if (items.length < limit) makeRoom();
+        yield item;
+        continue;
+      }
+      if (closed) {
+        if (error !== undefined) throw error;
+        return;
+      }
+      await new Promise<void>((resolve, reject) => {
+        const onAbort = () => reject(signal.reason);
+        signal.addEventListener("abort", onAbort, { once: true });
+        wake = () => {
+          signal.removeEventListener("abort", onAbort);
+          resolve();
+        };
+      });
+    }
+  }
   return {
-    push(item: T) {
+    get ended() {
+      return ended;
+    },
+    async push(item: T) {
+      if (ended) return;
       items.push(item);
       notify();
+      while (items.length >= limit && !ended) await new Promise<void>((resolve) => waiting.push(resolve));
     },
     close(err?: unknown) {
       closed = true;
@@ -304,24 +355,12 @@ function createChannel<T>() {
       notify();
     },
     async *drain(signal: AbortSignal): AsyncGenerator<T> {
-      for (;;) {
-        signal.throwIfAborted();
-        if (items.length) {
-          yield items.shift()!;
-          continue;
-        }
-        if (closed) {
-          if (error !== undefined) throw error;
-          return;
-        }
-        await new Promise<void>((resolve, reject) => {
-          const onAbort = () => reject(signal.reason);
-          signal.addEventListener("abort", onAbort, { once: true });
-          wake = () => {
-            signal.removeEventListener("abort", onAbort);
-            resolve();
-          };
-        });
+      try {
+        yield* read(signal);
+      } finally {
+        ended = true;
+        items.length = 0;
+        makeRoom();
       }
     },
   };

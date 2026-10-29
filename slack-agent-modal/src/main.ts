@@ -14,7 +14,7 @@ import { createAccessCheck, memberEmail, parseAllowlist } from "./access.js";
 import { createClaudeHarness } from "./claude.js";
 import { loadConfig } from "./config.js";
 import { createGateway, type SlackEvent } from "./gateway.js";
-import { createJournal } from "./journal.js";
+import { createJournal, loadInstanceId } from "./journal.js";
 import { createModal, createModalClient, proxyFor } from "./modal.js";
 import { createVault } from "./vault.js";
 
@@ -24,7 +24,7 @@ const log = console.log;
 
 // Each sandbox reaches Agent Proxy and nothing public; with a Volume, the proxy is its own sidecar.
 const network = proxyFor(config.vault.proxy);
-const sandboxes = createModal({ ...config.modal, client: createModalClient(config.modal), network, role: "bot", runTimeoutMs: config.runTimeoutMs });
+const sandboxes = createModal({ ...config.modal, client: createModalClient(config.modal), network, role: "bot", instance: loadInstanceId(config.stateDir), runTimeoutMs: config.runTimeoutMs });
 // Built while the rest of startup runs and awaited before connecting, so the first message doesn't
 // wait on it and a broken image fails here.
 const preparing = sandboxes.prepare(config.modal.image);
@@ -67,8 +67,8 @@ const gateway = createGateway({
   log,
 });
 
-// Before connecting, so nothing a crashed process left behind outlives this one's start. Only one
-// bot runs per Modal App, so its sweep of bot-tagged sandboxes finds only leftovers.
+// Before connecting, so nothing a crashed process left behind outlives this one's start. The sweep
+// takes only sandboxes tagged with this STATE_DIR's instance ID, so it finds only leftovers.
 await gateway.recover();
 log(`Sandbox image ${config.modal.image} ready: ${await preparing}`);
 

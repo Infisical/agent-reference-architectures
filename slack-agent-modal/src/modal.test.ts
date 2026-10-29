@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { NotFoundError, type ModalClient } from "modal";
-import { createModal, proxyFor, type ModalOptions } from "./modal.js";
+import { createChannel, createModal, proxyFor, type ModalOptions } from "./modal.js";
 import { collect } from "./test-helpers/fakes.js";
 
 /** A Modal exec: scripted output streams and exit code; records what reached its stdin. */
@@ -132,13 +132,14 @@ async function* lines(chunks: string[]) {
 
 const network = { outboundCidrAllowlist: ["10.0.0.3/32"] };
 const sidecarNetwork = proxyFor({ volume: "agent-proxy-state" });
-const tags = { app: "apollo", role: "bot" };
+const tags = { app: "apollo", role: "bot", instance: "i-1" };
 
 function setup(overrides: Partial<ModalOptions> = {}) {
   const fake = new FakeModal();
   const modal = createModal({
     appName: "apollo",
     role: "bot",
+    instance: "i-1",
     runTimeoutMs: 600_000,
     cpu: 2,
     memoryMiB: 2048,
@@ -267,7 +268,7 @@ test("exists: true while running, false once finished or unknown", async () => {
   assert.equal(await modal.exists("sb-never"), false);
 });
 
-test("sweep: terminates every running sandbox in the app with this client's role", async () => {
+test("sweep: terminates every running sandbox in the app with this client's role and instance", async () => {
   const { fake, modal } = setup();
   await modal.create("builtin", live(), () => {});
   await modal.create("builtin", live(), () => {});
@@ -327,4 +328,35 @@ test("proxyFor: refuses a fixed proxy Modal's IPv4-only allowlist can't express"
   for (const address of ["proxy.internal:17323", "[fdaa::3]:17323", "203.0.113.7", "203.0.113.7:17323/x", "203.0.113.7:99999"]) {
     assert.throws(() => proxyFor({ address }), /must be an IPv4 address and port/);
   }
+});
+
+test("channel: a push waits while the consumer is `limit` items behind, and resumes as it reads", async () => {
+  const channel = createChannel<number>(2);
+  let pushed = 0;
+  const producer = (async () => {
+    for (let i = 0; i < 5; i++) {
+      await channel.push(i);
+      pushed++;
+    }
+    channel.close();
+  })();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(pushed, 1, "the second push waits for room");
+  assert.deepEqual(await collect(channel.drain(live())), [0, 1, 2, 3, 4]);
+  await producer;
+});
+
+test("channel: once the consumer stops, queued items are dropped, a waiting push resolves and later pushes are ignored", async () => {
+  const channel = createChannel<number>(2);
+  const controller = new AbortController();
+  const reader = channel.drain(controller.signal);
+  const blocked = (async () => {
+    await channel.push(1);
+    await channel.push(2);
+  })();
+  assert.equal((await reader.next()).value, 1);
+  await reader.return(undefined);
+  await blocked;
+  assert.equal(channel.ended, true);
+  await channel.push(3); // resolves at once
 });

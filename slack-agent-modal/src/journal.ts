@@ -1,5 +1,6 @@
 import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 
 /**
  * The remote resources one run holds. IDs only: the session token is never written here.
@@ -51,4 +52,23 @@ export function createJournal(dir: string, log: (message: string) => void = cons
       return records;
     },
   };
+}
+
+/**
+ * A random ID for whoever owns `dir`, made on first use and kept there, so it survives restarts.
+ * Sandboxes are tagged with it, so a startup sweep terminates only its own and never those of
+ * another bot or smoke run sharing the Modal App.
+ */
+export function loadInstanceId(dir: string): string {
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, "instance-id");
+  try {
+    const id = readFileSync(file, "utf8").trim();
+    if (id) return id;
+  } catch {
+    // Not made yet.
+  }
+  const id = randomUUID();
+  writeFileSync(file, id);
+  return id;
 }

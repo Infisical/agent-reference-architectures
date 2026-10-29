@@ -73,7 +73,12 @@ def enroll() -> None:
                 time.sleep(0.5)
     finally:
         proc.terminate()
-        output, _ = proc.communicate(timeout=10)
+        try:
+            output, _ = proc.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            # Already enrolled if it got this far; a proxy slow to stop mustn't fail the job.
+            proc.kill()
+            output, _ = proc.communicate()
     state.commit()
     # The startup line names the proxy and its CA fingerprint, for AGENT_VAULT_CA_FINGERPRINT.
     for line in output.splitlines():
