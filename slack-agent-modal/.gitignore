@@ -1,0 +1,14 @@
+node_modules
+__pycache__
+dist
+state
+.env
+.env.*
+!.env.example
+.claude
+.vscode
+.idea
+*.log
+*.tsbuildinfo
+npm-debug.log*
+.DS_Store
