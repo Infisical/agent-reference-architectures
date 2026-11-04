@@ -45,10 +45,11 @@ function vault(routes: Parameters<typeof fakeFetch>[0]) {
 }
 
 const request = (accessBundles = ["coding-agent"], ttl = "15m") => ({ accessBundles, ttl });
+const wireBody = (accessBundle = "coding-agent", ttl = "15m") => ({ accessBundle, ttl });
 
 test("create: logs in once, then mints a session for the bundle with the ttl", async () => {
   const { calls, sessions } = vault({
-    [CREATE]: () => ({ body: { session: { id: "s1", token: "agv_x", expiresAt: null, accessBundles: [] } } }),
+    [CREATE]: () => ({ body: { session: { id: "s1", token: "agv_x", expiresAt: null, accessBundle: { name: "coding-agent" } } } }),
   });
   assert.deepEqual(await sessions.create(request()), { id: "s1", token: "agv_x" });
   await sessions.create(request());
@@ -56,7 +57,7 @@ test("create: logs in once, then mints a session for the bundle with the ttl", a
   assert.equal(calls.filter((c) => c.url.endsWith("/login")).length, 1, "access token is cached");
   assert.deepEqual(calls[0].body, { clientId: "cid", clientSecret: "csecret" });
   assert.equal(calls[1].url, "https://infisical.test/api/v1/agent-vault/sessions");
-  assert.deepEqual(calls[1].body, { accessBundles: ["coding-agent"], ttl: "15m" });
+  assert.deepEqual(calls[1].body, wireBody());
   assert.match(calls[1].auth ?? "", /^Bearer at-\d+$/);
 });
 
@@ -66,8 +67,15 @@ test("create: each session carries the bundles its caller chose, not one fixed o
   await sessions.create(request(["read-only"], "5m"));
   assert.deepEqual(
     calls.filter((c) => c.url.endsWith("/sessions")).map((c) => c.body),
-    [request(["coding-agent"]), request(["read-only"], "5m")],
+    [wireBody("coding-agent"), wireBody("read-only", "5m")],
   );
+});
+
+test("create: refuses anything but exactly one bundle before calling Infisical", async () => {
+  const { calls, sessions } = vault({});
+  await assert.rejects(sessions.create(request([])), /exactly one access bundle/);
+  await assert.rejects(sessions.create(request(["a", "b"])), /exactly one access bundle/);
+  assert.equal(calls.length, 0);
 });
 
 test("create: a bundle the identity isn't granted is refused by Infisical, and no token comes back", async () => {
@@ -92,7 +100,7 @@ test("getSession: returns the session's status", async () => {
     status: "revoked",
     revokedAt: "2026-10-18T00:00:00Z",
     expiresAt: null,
-    accessBundles: [{ name: "coding-agent" }],
+    accessBundle: { name: "coding-agent" },
   };
   const { getSession } = vault({ "GET /api/v1/agent-vault/sessions/s1": () => ({ body: { session } }) });
   assert.deepEqual(await getSession("s1"), session);

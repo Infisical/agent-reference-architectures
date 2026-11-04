@@ -24,7 +24,7 @@ export interface SessionStatus {
   status: string;
   revokedAt: string | null;
   expiresAt: string | null;
-  accessBundles: { name: string }[];
+  accessBundle: { name: string };
 }
 
 /** Re-login this long before the access token expires, so a request never carries a stale one. */
@@ -71,7 +71,10 @@ export function createVault({
 
   const sessions: SessionApi = {
     async create({ accessBundles, ttl }) {
-      const { session } = (await authed("POST", "/api/v1/agent-vault/sessions", { accessBundles, ttl })) as {
+      // SessionApi keeps a list, but a session carries exactly one bundle on the wire.
+      if (accessBundles.length !== 1) throw new Error("a session carries exactly one access bundle");
+      const body = { accessBundle: accessBundles[0], ttl };
+      const { session } = (await authed("POST", "/api/v1/agent-vault/sessions", body)) as {
         session: { id: string; token: string };
       };
       return { id: session.id, token: session.token };
