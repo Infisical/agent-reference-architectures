@@ -127,8 +127,8 @@ export class FakeSessions implements SessionApi {
     const id = `sess-${++this.next}`;
     this.log.push(`create ${id}`);
     this.active.add(id);
-    const accessBundles = request.accessBundles.map((name) => ({ name }));
-    this.sessions.set(id, { id, status: "active", revokedAt: null, expiresAt: "later", accessBundles });
+    const accessBundle = { name: request.accessBundles[0] };
+    this.sessions.set(id, { id, status: "active", revokedAt: null, expiresAt: "later", accessBundle });
     return { id, token: `agv_secret-${this.next}` };
   }
 

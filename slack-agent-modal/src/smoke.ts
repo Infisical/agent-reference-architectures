@@ -130,8 +130,8 @@ export async function checkSessionApi(vault: VaultApi, accessBundles: string[], 
     const active = await vault.getSession(session.id);
     fail(active.status === "active", `a new session is ${active.status}, not active`);
     fail(active.expiresAt !== null, "a one-minute session has no expiry");
-    const names = active.accessBundles.map((b) => b.name);
-    fail(names.join() === accessBundles.join(), `the session carries [${names}], not [${accessBundles}]`);
+    const name = active.accessBundle.name;
+    fail(name === accessBundles[0], `the session carries ${name}, not ${accessBundles[0]}`);
   } finally {
     await vault.sessions.revoke(session.id);
   }

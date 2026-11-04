@@ -39,14 +39,14 @@ Not yet verified:
 `src/vault.ts` implements this. Shapes are from the Infisical backend (`ee/routes/v1/agent-vault-routers/agent-vault-session-router.ts`, `ee/services/agent-vault-session/agent-vault-session-service.ts`) and were exercised live by the preflight (`npm run smoke -- --preflight --ungranted-bundle <slug>`). They are independent of the sandbox backend:
 
 - `POST /api/v1/auth/universal-auth/login` `{clientId, clientSecret}` returns `{accessToken, expiresIn, ...}`.
-- `POST /api/v1/agent-vault/sessions` `{accessBundles: ["<slug>"], ttl: "15m"}` returns `{session: {id, token, expiresAt, createdAt, accessBundles: [{id, name, position}]}}`. The token starts `agv_` and is returned only here.
-- `GET /api/v1/agent-vault/sessions/:id` returns `{session: {id, status, expiresAt, revokedAt, createdAt, actor, accessBundles}}`. `status` is `active`, `revoked` or `expired`.
+- `POST /api/v1/agent-vault/sessions` `{accessBundle: "<slug>", ttl: "15m"}` returns `{session: {id, token, expiresAt, createdAt, accessBundle: {id, name}}}`. The token starts `agv_` and is returned only here.
+- `GET /api/v1/agent-vault/sessions/:id` returns `{session: {id, status, expiresAt, revokedAt, createdAt, actor, accessBundle}}`. `status` is `active`, `revoked` or `expired`.
 - `POST /api/v1/agent-vault/sessions/:id/revoke` returns 200 `{session}`, and again 200 for a session already revoked.
 - The proxy rejects a revoked token after its poll interval (lag not measured).
 
 Rules the server enforces:
 
-- **One bundle per session** (`AGENT_VAULT_MAX_SESSION_BUNDLES = 1`); more is a 400. The API and `SessionApi.create` still take an array.
+- **One bundle per session.** `SessionApi.create` still takes an array, and `src/vault.ts` sends its one name as `accessBundle`.
 - **Only granted bundles.** A bundle the identity isn't granted, or one that doesn't exist, is a 400: `No access bundle named '<x>' is granted to you`. Verified live with an ungranted name.
 - **Admins bypass grants.** An Agent Vault admin can mint over any bundle, so the identity must be a plain member. The preflight flags an identity that can mint the ungranted bundle.
 - **TTL** is a duration of at least `1m`, or `never`. It defaults to `7d`, so Apollo always sends one: the run timeout plus 5 minutes.

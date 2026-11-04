@@ -71,13 +71,13 @@ Observed:
 `src/vault.ts` implements this, and `npm run smoke -- --preflight --ungranted-bundle <slug>` exercises it:
 
 - `POST /api/v1/auth/universal-auth/login` `{clientId, clientSecret}` returns `{accessToken, expiresIn, ...}`.
-- `POST /api/v1/agent-vault/sessions` `{accessBundles: ["<slug>"], ttl: "15m"}` returns `{session: {id, token, expiresAt, createdAt, accessBundles: [{id, name, position}]}}`. The token starts `agv_` and is returned only here.
-- `GET /api/v1/agent-vault/sessions/:id` returns `{session: {id, status, expiresAt, revokedAt, createdAt, actor, accessBundles}}`. `status` is `active`, `revoked` or `expired`.
+- `POST /api/v1/agent-vault/sessions` `{accessBundle: "<slug>", ttl: "15m"}` returns `{session: {id, token, expiresAt, createdAt, accessBundle: {id, name}}}`. The token starts `agv_` and is returned only here.
+- `GET /api/v1/agent-vault/sessions/:id` returns `{session: {id, status, expiresAt, revokedAt, createdAt, actor, accessBundle}}`. `status` is `active`, `revoked` or `expired`.
 - `POST /api/v1/agent-vault/sessions/:id/revoke` returns 200 `{session}`, and again 200 for a session already revoked.
 
 Rules the server enforces:
 
-- **One access bundle per session**; more is a 400. The API and `SessionApi.create` still take an array.
+- **One access bundle per session.** `SessionApi.create` still takes an array, and `src/vault.ts` sends its one name as `accessBundle`.
 - **Only granted access bundles.** One the identity isn't granted, or one that doesn't exist, is a 400: `No access bundle named '<x>' is granted to you`.
 - **Admins bypass grants.** An Agent Vault Admin can mint over any access bundle, so the identity must be a plain Member. The preflight flags an identity that can mint an ungranted bundle.
 - **TTL** is a duration of at least `1m`, or `never`. It defaults to `7d`, so Atlas always sends one: the run timeout plus 5 minutes.
