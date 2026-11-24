@@ -1,0 +1,29 @@
+# Runs the on-call agent and an Agent Vault proxy side by side. From this folder:
+#   cp agent-vault.env.example agent-vault.env   # then fill it in
+#   docker compose --env-file agent-vault.env up --build
+services:
+  proxy:
+    image: infisical/cli:0.45.13
+    command: ["agent-vault", "proxy"]
+    environment:
+      INFISICAL_AGENT_VAULT_PROXY_TOKEN: ${INFISICAL_AGENT_VAULT_PROXY_TOKEN:?set it in agent-vault.env}
+      INFISICAL_DOMAIN: ${INFISICAL_DOMAIN:-https://app.infisical.com}
+    volumes:
+      - proxy-data:/etc/infisical/agent-vault
+    restart: unless-stopped
+
+  agent:
+    build: ..
+    depends_on: [proxy]
+    env_file: ../.env
+    environment:
+      INFISICAL_DOMAIN: ${INFISICAL_DOMAIN:-https://app.infisical.com}
+      INFISICAL_UNIVERSAL_AUTH_CLIENT_ID: ${INFISICAL_UNIVERSAL_AUTH_CLIENT_ID:?set it in agent-vault.env}
+      INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET: ${INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET:?set it in agent-vault.env}
+      INFISICAL_AGENT_VAULT_PROJECT_ID: ${INFISICAL_AGENT_VAULT_PROJECT_ID:?set it in agent-vault.env}
+      INFISICAL_AGENT_VAULT_CA_FINGERPRINT: ${INFISICAL_AGENT_VAULT_CA_FINGERPRINT:?set it in agent-vault.env}
+      INFISICAL_AGENT_VAULT_PROXY_ADDRESS: proxy:17323
+    restart: unless-stopped
+
+volumes:
+  proxy-data:
