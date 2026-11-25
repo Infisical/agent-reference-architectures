@@ -5,6 +5,7 @@ Reference architectures for running AI agents with Infisical Agent Vault. Each f
 | Folder | Status |
 | --- | --- |
 | `slack-agents/on-call/` | A Slack agent that runs Claude Code. Read its `AGENTS.md` |
+| `slack-agents/coding/` | A Slack agent that runs Claude Code and opens pull requests. Read its `AGENTS.md` |
 
 ## Setting up an example for a person
 

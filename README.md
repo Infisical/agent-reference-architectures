@@ -5,6 +5,7 @@ Reference architectures for running AI agents with [Infisical Agent Vault](https
 | Architecture | What it shows |
 | --- | --- |
 | [`slack-agents/on-call`](slack-agents/on-call) | A Slack agent that runs Claude Code to investigate Sentry errors and fix them on GitHub, on [Docker](slack-agents/on-call/docker) or a [VM](slack-agents/on-call/vm). |
+| [`slack-agents/coding`](slack-agents/coding) | A Slack agent that runs Claude Code to answer questions about a repo and open pull requests, on a [VM](slack-agents/coding/vm). |
 
 ## License
 
