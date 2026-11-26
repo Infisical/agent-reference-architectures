@@ -1,0 +1,11 @@
+# Runs the team assistant's orchestrator. Each message runs in a Modal sandbox with its own proxy, so
+# there's no proxy container here. From this folder:
+#   cp team-assistant.env.example team-assistant.env   # then fill it in
+#   docker compose up --build
+services:
+  orchestrator:
+    build: ..
+    env_file:
+      - ../.env
+      - team-assistant.env
+    restart: unless-stopped
