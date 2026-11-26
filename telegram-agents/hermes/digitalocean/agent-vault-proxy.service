@@ -1,0 +1,13 @@
+[Unit]
+Description=Infisical Agent Vault proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=/etc/infisical/agent-vault-proxy.env
+StateDirectory=agent-vault-proxy
+ExecStart=/usr/bin/infisical agent-vault proxy --listen-host 127.0.0.1 --data-dir /var/lib/agent-vault-proxy
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

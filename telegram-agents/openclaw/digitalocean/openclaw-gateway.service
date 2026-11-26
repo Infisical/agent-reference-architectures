@@ -1,0 +1,24 @@
+[Unit]
+Description=OpenClaw gateway behind Infisical Agent Vault
+After=network-online.target agent-vault-proxy.service
+Wants=network-online.target agent-vault-proxy.service
+
+[Service]
+User=openclaw
+EnvironmentFile=/etc/infisical/openclaw.env
+# Placeholders. The proxy attaches the Anthropic key and swaps the Telegram placeholder in the URL path.
+Environment=ANTHROPIC_API_KEY=agent-vault
+Environment=TELEGRAM_BOT_TOKEN=avplaceholder-openclaw-telegram
+ExecStart=/usr/bin/infisical agent-vault run \
+  --access-bundle openclaw \
+  --proxy localhost:17323 \
+  --ca-fingerprint ${INFISICAL_AGENT_VAULT_CA_FINGERPRINT} \
+  --label "OpenClaw gateway" \
+  -- /usr/bin/openclaw gateway run
+Restart=always
+RestartSec=5
+# The CLI exits 143 on SIGTERM after revoking the session, which is a clean stop.
+SuccessExitStatus=143
+
+[Install]
+WantedBy=multi-user.target
