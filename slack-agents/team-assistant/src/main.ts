@@ -1,13 +1,13 @@
 // Starts the team assistant: npm start
 import { loadConfig, loadEnv } from "./config.ts";
-import { createSandboxes } from "./modal.ts";
+import { createSandboxes } from "./sandbox.ts";
 import { createRunner } from "./run.ts";
 import { startSlackBot } from "./slack.ts";
 import { createVault } from "./vault.ts";
 
 loadEnv();
 const config = loadConfig();
-const sandboxes = createSandboxes(config);
+const sandboxes = await createSandboxes(config);
 const runner = createRunner({ config, vault: createVault(config), sandboxes });
 
 // Sandboxes a crash left behind still hold a session token, so they go before anything new starts.

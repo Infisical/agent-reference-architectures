@@ -33,6 +33,8 @@ export interface Config {
   clientSecret: string;
   proxyToken: string;
   caFingerprint: string;
+  /** Where each message runs: modal (the default) or daytona. */
+  sandboxProvider: "modal" | "daytona";
   modalAppName: string;
   maxSandboxes: number;
   runTimeoutMs: number;
@@ -55,6 +57,7 @@ export function loadConfig(): Config {
     clientSecret: requireEnv("INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET"),
     proxyToken: requireEnv("INFISICAL_AGENT_VAULT_PROXY_TOKEN"),
     caFingerprint: requireEnv("INFISICAL_AGENT_VAULT_CA_FINGERPRINT"),
+    sandboxProvider: sandboxProvider(),
     modalAppName: process.env.MODAL_APP_NAME?.trim() || "team-assistant",
     maxSandboxes: numberEnv("MAX_SANDBOXES", 3),
     runTimeoutMs: numberEnv("RUN_TIMEOUT_MINUTES", 10) * 60_000,
@@ -63,4 +66,10 @@ export function loadConfig(): Config {
     prompt: readFileSync(join(AGENT_DIR, "prompt.md"), "utf8"),
     mcpConfig: existsSync(mcpPath) ? JSON.stringify(JSON.parse(readFileSync(mcpPath, "utf8"))) : '{"mcpServers":{}}',
   };
+}
+
+function sandboxProvider(): Config["sandboxProvider"] {
+  const value = process.env.SANDBOX_PROVIDER?.trim().toLowerCase() || "modal";
+  if (value !== "modal" && value !== "daytona") throw new Error(`SANDBOX_PROVIDER must be modal or daytona, got "${value}"`);
+  return value;
 }

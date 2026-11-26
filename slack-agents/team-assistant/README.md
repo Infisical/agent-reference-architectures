@@ -2,7 +2,7 @@
 
 A Slack assistant for your whole team. DM it or mention it in a channel, and it does the work with the access of the person who asked: their GitHub, their Linear, their Notion.
 
-Each message runs Claude Code in a fresh [Modal](https://modal.com/docs/guide/sandboxes) sandbox that holds no credentials and can't reach the internet. Its only way out is an [Infisical Agent Vault](https://infisical.com/docs/documentation/platform/agent-vault/overview) proxy running beside it in the same sandbox. The proxy attaches the credentials of the person who asked, and blocks requests to any host outside the access bundle.
+Each message runs Claude Code in a fresh sandbox, on [Modal](https://modal.com/docs/guide/sandboxes) or [Daytona](https://www.daytona.io/docs/en/sandboxes/), that holds no credentials and can't reach the internet. Its only way out is an [Infisical Agent Vault](https://infisical.com/docs/documentation/platform/agent-vault/overview) proxy that only that run can reach. The proxy attaches the credentials of the person who asked, and blocks requests to any host outside the access bundle.
 
 ## How it works
 
@@ -11,9 +11,9 @@ flowchart LR
   slack[Slack]
   orch["Orchestrator<br/>Docker container"]
   vault["Infisical Agent Vault<br/>delegation, access bundle,<br/>each person's sign-ins"]
-  subgraph sandbox[Modal sandbox, one per message]
+  subgraph sandbox[Modal or Daytona, one run per message]
     claude["Claude Code<br/>no internet access"]
-    proxy["Agent Vault proxy<br/>sidecar"]
+    proxy["Agent Vault proxy<br/>only this run can reach it"]
   end
   apis["Anthropic, GitHub,<br/>Linear, Notion"]
 
@@ -27,13 +27,16 @@ flowchart LR
 
 1. Someone DMs the bot or mentions it in a channel. The orchestrator looks up the email on their Slack profile.
 2. The orchestrator logs in as its machine identity and starts an Agent Vault [session on behalf of](https://infisical.com/docs/documentation/platform/agent-vault/sessions-on-behalf-of-users) the Infisical user with that email, over the `team-assistant` access bundle. If the identity's delegation doesn't cover them, the bot says so and starts nothing.
-3. It creates a Modal sandbox with no public egress, and starts the Agent Vault proxy in it as a sidecar. The agent's container can reach only the sidecar.
-4. It runs Claude Code in the sandbox, behind the sidecar, with the session token on stdin. The proxy attaches the person's own sign-ins, so the agent sees what they can see in each tool, and nothing else.
-5. The bot posts what Claude Code is doing as a status line in Slack, then posts the answer in the thread. The orchestrator revokes the session and terminates the sandbox.
+3. It creates a sandbox with no internet access, and starts the Agent Vault proxy where only that sandbox can reach it.
+4. It runs Claude Code in the sandbox, behind the proxy, with the session token. The proxy attaches the person's own sign-ins, so the agent sees what they can see in each tool, and nothing else.
+5. The bot posts what Claude Code is doing as a status line in Slack, then posts the answer in the thread. The orchestrator stops the proxy, revokes the session, and deletes the sandbox.
 
-The orchestrator follows the [Agent Vault guide for Modal](https://infisical.com/docs/documentation/platform/agent-vault/guides/modal): it starts sessions with the [Infisical Node.js SDK](https://infisical.com/docs/sdks/languages/node), and each sandbox runs the proxy as a sidecar from the same image as the agent.
+The orchestrator starts sessions with the [Infisical Node.js SDK](https://infisical.com/docs/sdks/languages/node), and runs each message on the platform `SANDBOX_PROVIDER` names:
 
-The sandbox holds no credentials. The orchestrator holds real ones: the Slack tokens, the Modal token, and the machine identity's client secret, which it needs to start sessions. Keep it on a host of its own.
+- **Modal** (the default) follows the [Agent Vault guide for Modal](https://infisical.com/docs/documentation/platform/agent-vault/guides/modal). The proxy runs as a sidecar in the agent's sandbox
+- **Daytona** follows the [Agent Vault guide for Daytona](https://infisical.com/docs/documentation/platform/agent-vault/guides/daytona). The proxy runs in a sandbox of its own, and the agent's sandbox is linked to it and can reach only the proxy
+
+The sandbox holds no credentials. The orchestrator holds real ones: the Slack tokens, the Modal token or Daytona API key, and the machine identity's client secret, which it needs to start sessions. Keep it on a host of its own.
 
 ## What's in this folder
 
@@ -44,7 +47,8 @@ The sandbox holds no credentials. The orchestrator holds real ones: the Slack to
 | `.env.example` | The orchestrator's settings |
 | `slack-app-manifest.yaml` | The Slack app |
 | `src/` | The orchestrator: reads Slack, starts sessions, and runs each message in a sandbox |
-| `src/smoke.ts` | Checks Modal and Agent Vault without Slack |
+| `src/modal.ts`, `src/daytona.ts` | Creating the sandbox and its proxy on each platform |
+| `src/smoke.ts` | Checks the sandbox platform and Agent Vault without Slack |
 | `Dockerfile`, `docker/` | The orchestrator's image, a Compose file, and the template for its secret file |
 
 Claude Code runs in `bypassPermissions` mode with a shell, so it can run any command in its sandbox without asking. The sandbox is the boundary: it's new for every message, and it's terminated when the answer is posted.
@@ -64,7 +68,7 @@ You don't need all three MCP servers. Add the ones your team uses, and keep `mcp
 
 **Machine identity:** `team-assistant`, with the Member role in Agent Vault, access to the `team-assistant` access bundle, and a [delegation](https://infisical.com/docs/documentation/platform/agent-vault/sessions-on-behalf-of-users#set-up-a-delegation) that covers the people who can use the assistant.
 
-**Proxy:** one proxy with the **Service hosts only** traffic policy. Every sandbox runs a copy of it as a sidecar.
+**Proxy:** one proxy with the **Service hosts only** traffic policy. Every run starts a copy of it from the same proxy token.
 
 **People:** each person who uses the assistant is a member of the Agent Vault project, with a grant on the access bundle, and connects their own account to each MCP service. The email on their Slack profile must be the email of their Infisical account.
 
@@ -76,8 +80,8 @@ A session on someone's behalf reaches only the access bundles that both the mach
 
 - An Infisical organization with Agent Vault, and the Admin role in an Agent Vault project
 - A Slack workspace where you can create apps
-- A Modal workspace
-- A host for the orchestrator that runs Docker containers, such as a small VM or Render. It needs outbound internet access only. Claude Code runs in Modal, not on this host
+- A Modal workspace, or a Daytona organization on [Tier 3 or 4](https://www.daytona.io/docs/en/network-limits/#tier-based-network-restrictions). On Daytona's lower tiers, a sandbox can't be limited to reaching the proxy
+- A host for the orchestrator that runs Docker containers, such as a small VM or Render. It needs outbound internet access only. Claude Code runs in the sandboxes, not on this host
 
 **Credentials.** Each one goes into Agent Vault, never into a file:
 
@@ -92,7 +96,8 @@ A session on someone's behalf reaches only the access bundles that both the mach
 | --- | --- |
 | Proxy token | The **Proxy Token** dialog, in [Step 2](#step-2-create-the-proxy) |
 | Machine identity client ID and client secret | The machine identity, in [Step 4](#step-4-create-the-machine-identity) |
-| Modal token ID and secret | [modal.com/settings/tokens](https://modal.com/settings/tokens). Use a token for a service user, not a person's |
+| Modal token ID and secret, for Modal | [modal.com/settings/tokens](https://modal.com/settings/tokens). Use a token for a service user, not a person's |
+| Daytona API key, for Daytona | [app.daytona.io/dashboard/keys](https://app.daytona.io/dashboard/keys) |
 | Slack bot token (`xoxb-...`) and app-level token (`xapp-...`) | The Slack app, in [Step 1](#step-1-create-the-slack-app) |
 
 **Settings that aren't secret.** They go into `.env`:
@@ -101,6 +106,7 @@ A session on someone's behalf reaches only the access bundles that both the mach
 | --- | --- |
 | `INFISICAL_AGENT_VAULT_PROJECT_ID` | The Agent Vault project's URL, after `/projects/agent-vault/` |
 | `INFISICAL_AGENT_VAULT_CA_FINGERPRINT` | The **Certificate Authority** column on the **Proxies** page, in [Step 2](#step-2-create-the-proxy) |
+| `SANDBOX_PROVIDER` | `modal` (the default) or `daytona` |
 
 ## Step 1: Create the Slack app
 
@@ -149,7 +155,7 @@ The agent can use a service only after the person connects it. Until then, it te
 
 ## Step 6: Deploy the orchestrator
 
-1. In this folder, copy `.env.example` to `.env`, and fill in the settings from [What you need](#what-you-need).
+1. In this folder, copy `.env.example` to `.env`, and fill in the settings from [What you need](#what-you-need). For Daytona, set `SANDBOX_PROVIDER=daytona`.
 
 2. Copy the template for the secret file, and keep the copy out of git:
 
@@ -157,9 +163,9 @@ The agent can use a service only after the person connects it. Until then, it te
    cp docker/team-assistant.env.example docker/team-assistant.env
    ```
 
-3. Fill in `docker/team-assistant.env` with the proxy token, the machine identity's client ID and client secret, the Modal token, and the Slack tokens. If you use Infisical outside US Cloud, add `INFISICAL_DOMAIN` to `.env`, such as `https://eu.infisical.com`.
+3. Fill in `docker/team-assistant.env` with the proxy token, the machine identity's client ID and client secret, the Modal token or the Daytona API key, and the Slack tokens. If you use Infisical outside US Cloud, add `INFISICAL_DOMAIN` to `.env`, such as `https://eu.infisical.com`.
 
-4. Check Modal and Agent Vault without Slack. The first check starts a sandbox and its proxy, and checks that the agent can reach only the proxy. The second runs the agent once on behalf of a person in the delegation, and needs their account connected to at least one MCP service:
+4. Check the sandbox platform and Agent Vault without Slack. The first check builds the image, which takes a few minutes the first time, then starts a sandbox and its proxy, and checks that the agent can reach only the proxy. The second runs the agent once on behalf of a person in the delegation, and needs their account connected to at least one MCP service:
 
    ```
    cd docker
@@ -187,9 +193,9 @@ In a thread, people can ask the bot to stop following it. It then ignores untagg
 
 - The email on each person's Slack profile must match their Infisical account. Someone whose emails differ gets a reply that the bot can't act for them
 - The orchestrator holds real secrets, and isn't behind Agent Vault. Keep it on a host of its own
-- Sidecars are a Modal beta feature (`experimentalSidecars` in Modal's JavaScript SDK), so the API may change
-- Modal allows DNS lookups from a sandbox even with no public egress
-- Every sandbox's sidecar holds the proxy token. The sidecar is a separate container from the agent's
+- Each run's proxy holds the proxy token, in a container or sandbox separate from the agent's
+- On Modal, sidecars are a beta feature (`experimentalSidecars` in Modal's JavaScript SDK), so the API may change, and Modal allows DNS lookups from a sandbox even with no public egress
+- On Daytona, each sandbox has `HTTP_PROXY` and `HTTPS_PROXY` set to a proxy of Daytona's own. The orchestrator removes them before anything runs in the agent's sandbox, so its only way out is the Agent Vault proxy
 - Messages from other people in a thread go to the agent as context, marked as not instructions. The agent acts with the requester's access, and nothing but its instructions stops it from following them
 - The agent has no memory between messages. Within a thread, it reads the earlier messages each time
 - Threads the bot was asked to stop following are kept in memory, so a restart forgets them

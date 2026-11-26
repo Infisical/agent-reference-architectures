@@ -1,11 +1,13 @@
-import type { Sandbox } from "modal";
+import { WORKSPACE_DIR, type Sandboxes } from "./sandbox.ts";
 import { parseStreamLine, progressLabel } from "./claude-stream.ts";
 import type { Config } from "./config.ts";
-import { PROXY_ADDRESS, WORKSPACE_DIR, type Sandboxes } from "./modal.ts";
 import type { Vault } from "./vault.ts";
 
 /** A session outlives its run's timeout by this much, so cleanup never races its expiry. */
 const SESSION_MARGIN_MINUTES = 5;
+
+/** One run's session and sandbox, kept so cleanup and a shutdown can find them. */
+type Run = { sessionId?: string; sandbox?: { id: string } };
 
 export interface RunRequest {
   /** The Slack user's email: the session acts on behalf of the Infisical user with this email. */
@@ -49,7 +51,7 @@ export function bootstrapScript(config: Pick<Config, "prompt" | "caFingerprint" 
     "IFS= read -r MCP_CONFIG",
     `cd ${WORKSPACE_DIR}`,
     `printf %s ${shellQuote(prompt)} | base64 -d > prompt.md`,
-    `exec infisical agent-vault run --proxy ${PROXY_ADDRESS} --ca-fingerprint ${shellQuote(config.caFingerprint)} --telemetry=false -- ${claude}`,
+    `exec infisical agent-vault run --ca-fingerprint ${shellQuote(config.caFingerprint)} --telemetry=false -- ${claude}`,
   ].join("\n");
 }
 
@@ -83,21 +85,26 @@ function createLimiter(max: number) {
 export function createRunner({ config, vault, sandboxes }: { config: Config; vault: Vault; sandboxes: Sandboxes }) {
   const limiter = createLimiter(config.maxSandboxes);
   const script = bootstrapScript(config);
-  const active = new Set<{ sessionId?: string; sandbox?: Sandbox }>();
+  const active = new Set<Run>();
 
-  async function cleanUp(run: { sessionId?: string; sandbox?: Sandbox }) {
-    await Promise.all([
-      run.sessionId &&
-        vault.revokeSession(run.sessionId).catch((err) => console.error(`Failed to revoke session ${run.sessionId}:`, err)),
-      run.sandbox &&
-        sandboxes.terminate(run.sandbox).catch((err) => console.error(`Failed to terminate ${run.sandbox?.sandboxId}:`, err)),
-    ]);
+  // The proxy stops first, so it uploads the rest of the session logs. Then the session is revoked
+  // before the sandbox goes, so it ends even if terminating fails.
+  async function cleanUp(run: Run) {
+    if (run.sandbox) {
+      await sandboxes.stopProxy(run.sandbox).catch((err) => console.error(`Failed to stop the proxy in ${run.sandbox?.id}:`, err));
+    }
+    if (run.sessionId) {
+      await vault.revokeSession(run.sessionId).catch((err) => console.error(`Failed to revoke session ${run.sessionId}:`, err));
+    }
+    if (run.sandbox) {
+      await sandboxes.terminate(run.sandbox).catch((err) => console.error(`Failed to terminate ${run.sandbox?.id}:`, err));
+    }
   }
 
   return {
     async run({ email, label, prompt, onQueued, onProgress }: RunRequest): Promise<string> {
       const release = await limiter.acquire(onQueued);
-      const run: { sessionId?: string; sandbox?: Sandbox } = {};
+      const run: Run = {};
       active.add(run);
       try {
         // The session comes first: someone the delegation doesn't cover is refused before a sandbox starts.
