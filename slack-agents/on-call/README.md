@@ -76,8 +76,7 @@ To limit where a leaked client secret works, restrict it to the agent's machine 
 - An Infisical organization with Agent Vault, and the Admin role in an Agent Vault project
 - A Slack workspace where you can create apps
 - A Sentry project, and a GitHub repo with at least one commit
-- The [Infisical CLI](https://infisical.com/docs/cli/overview), version 0.45.13 or later. If Homebrew can't upgrade it, `npx @infisical/cli@0.45.13` runs the same CLI
-- Node.js 24 or later, [Claude Code](https://docs.claude.com/en/docs/claude-code/overview), and the [GitHub CLI](https://cli.github.com), to run the agent outside Docker
+- Somewhere to deploy the agent: Docker with Compose, or a Debian or Ubuntu VM with outbound internet access and `sudo`
 
 **Credentials.** Each one goes into Agent Vault, never into a file or the agent's environment:
 
@@ -125,14 +124,6 @@ The app uses Socket Mode, so the agent doesn't need a public URL.
 5. Keep the proxy token. You can rotate it later from the proxy's menu. Rotating it also changes the proxy's fingerprint, so update the fingerprint wherever the agent runs.
 6. Copy the proxy's fingerprint from the **Certificate Authority** column on the **Proxies** page. The agent uses it to check that it's talking to your proxy.
 
-The [Docker](docker) and [VM](vm) deployments run the proxy for you. To run it on your own machine for [Step 5](#step-5-run-the-agent-locally):
-
-```
-INFISICAL_AGENT_VAULT_PROXY_TOKEN=<proxy-token> infisical agent-vault proxy --data-dir ~/.infisical/agent-vault-on-call
-```
-
-The proxy listens on port 17323. Use a `--data-dir` of its own if you've run another Agent Vault proxy on the same machine.
-
 ## Step 3: Create the access bundle
 
 1. Go to **Access Bundles** and select **Create Access Bundle**. Name it `on-call`.
@@ -154,37 +145,7 @@ The Slack app sends two tokens to Slack. The bot token goes on API calls, and th
 
 Keep the client ID and client secret. The client secret is the only real secret the agent's machine holds.
 
-## Step 5: Run the agent locally
-
-Run it locally to test it. For anything longer, deploy it, so the agent's shell runs on a machine of its own.
-
-1. From this folder, install the dependencies and check the types:
-
-   ```
-   npm install
-   npm run typecheck
-   ```
-
-2. Copy `.env.example` to `.env`, and fill in the settings from [What you need](#what-you-need). Leave the placeholders as they are.
-
-3. With the proxy from Step 2 running, log in as the machine identity and ask the agent one question without Slack:
-
-   ```
-   export INFISICAL_UNIVERSAL_AUTH_CLIENT_ID=<client-id>
-   export INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET=<client-secret>
-   export INFISICAL_AGENT_VAULT_PROJECT_ID=<agent-vault-project-id>
-   infisical agent-vault run --access-bundle on-call --proxy localhost:17323 \
-     --ca-fingerprint <fingerprint> \
-     -- npm run ask -- "What are the latest errors in Sentry?"
-   ```
-
-   If you use Infisical outside US Cloud, also set `INFISICAL_DOMAIN`, such as `https://eu.infisical.com`.
-
-4. Replace `npm run ask -- "..."` with `npm start` to start the Slack bot, then mention the bot in its channel.
-
-Claude Code works in `~/on-call-agent`. On your own machine, it also loads your `~/.claude` settings. The session ends when the agent exits.
-
-## Step 6: Deploy
+## Step 5: Deploy
 
 - [Docker](docker): the agent and the proxy with Docker Compose
 - [Virtual machine](vm): the agent and the proxy as systemd services on a Linux VM
