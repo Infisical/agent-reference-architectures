@@ -14,7 +14,7 @@ A Hermes Agent gateway on Telegram, behind Infisical Agent Vault. There's no cod
 
 1. Ask the person to complete steps 1 to 4 of the README in Telegram and Agent Vault. Give them the exact names: the `hermes` access bundle, its two services, and the placeholder `avplaceholder-hermes-telegram` with **URL Path** selected. If they use other names, use theirs in the deployment files.
 2. Ask for their numeric Telegram user ID, and set it in `platforms.telegram.extra.allow_from`. Never ask for the bot token or the client secret.
-3. Deploy with `digitalocean/`. The person fills in the secret files themselves.
+3. Deploy with steps 5 to 9 of the README. The person fills in the secret files themselves.
 4. Have the person message the bot. A reply confirms the session, Telegram, and Anthropic.
 5. Check the block. Asking Hermes to fetch a host outside the bundle, such as `api.open-meteo.com`, should come back refused by the proxy.
 
