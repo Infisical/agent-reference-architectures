@@ -40,9 +40,10 @@ The code in this repo never calls Infisical, and holds no keys. The agent's envi
 | `.env.example` | The agent's settings |
 | `slack-app-manifest.yaml` | The Slack app |
 | `src/` | The Slack bridge: reads Slack and runs `claude -p` for each message |
-| `vm/` | The deployment |
+| `Dockerfile`, `docker/` | The Docker deployment: the agent's image, and a Compose file that runs it next to the proxy |
+| `vm/` | The VM deployment: systemd services for the agent and the proxy, and the template for the agent's secret file |
 
-Claude Code works in `~/coding-agent`, where it keeps its clone of the repo between messages. It runs in `bypassPermissions` mode, so it can run any command without asking. The machine it runs on is the boundary. Run it on a machine of its own, such as the [VM](vm) deployment.
+Claude Code works in `~/coding-agent`, where it keeps its clone of the repo between messages. It runs in `bypassPermissions` mode, so it can run any command without asking. The machine it runs on is the boundary. Run it on a machine of its own, such as a container or VM from [Step 5](#step-5-deploy-the-agent).
 
 ## Agent Vault configuration
 
@@ -72,8 +73,7 @@ To limit where a leaked client secret works, restrict it to the agent's machine 
 - An Infisical organization with Agent Vault, and the Admin role in an Agent Vault project
 - A Slack workspace where you can create apps
 - A GitHub repo with at least one commit
-- The [Infisical CLI](https://infisical.com/docs/cli/overview), version 0.45.13 or later. If Homebrew can't upgrade it, `npx @infisical/cli@0.45.13` runs the same CLI
-- Node.js 24 or later, [Claude Code](https://docs.claude.com/en/docs/claude-code/overview), and the [GitHub CLI](https://cli.github.com), to run the agent locally
+- Somewhere to deploy the agent: Docker with Compose, or a Debian or Ubuntu VM with outbound internet access and `sudo`, such as an EC2 instance or a DigitalOcean Droplet
 
 **Credentials.** Each one goes into Agent Vault, never into a file or the agent's environment:
 
@@ -101,7 +101,7 @@ To keep the agent off the default branch on GitHub's side too, protect the defau
 | `GITHUB_REPO` | The repo, as `owner/repo` |
 | `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME`, `GIT_COMMITTER_EMAIL` | The name and email the agent's commits show. GitHub links a commit to an account only if its email is verified on that account, so use one of the token owner's emails, such as the `noreply` address from GitHub's email settings |
 
-You also need the Agent Vault project's ID and the proxy's fingerprint, which aren't secret either. The deployment's secret file holds them, next to the secrets.
+You also need the Agent Vault project's ID and the proxy's fingerprint, which aren't secret either. The agent's secret file holds them, next to the secrets.
 
 ## Step 1: Create the Slack app
 
@@ -121,14 +121,6 @@ The app uses Socket Mode, so the agent doesn't need a public URL.
 4. Select **Create**. The **Proxy Token** dialog shows the proxy token, with commands to run the proxy with the CLI, systemd, Docker, or Kubernetes.
 5. Keep the proxy token. You can rotate it later from the proxy's menu. Rotating it also changes the proxy's fingerprint, so update the fingerprint wherever the agent runs.
 6. Copy the proxy's fingerprint from the **Certificate Authority** column on the **Proxies** page. The agent uses it to check that it's talking to your proxy.
-
-The [VM](vm) deployment runs the proxy for you. To run it on your own machine for [Step 5](#step-5-run-the-agent-locally):
-
-```
-INFISICAL_AGENT_VAULT_PROXY_TOKEN=<proxy-token> infisical agent-vault proxy --data-dir ~/.infisical/agent-vault-coding
-```
-
-The proxy listens on port 17323. Use a `--data-dir` of its own if you've run another Agent Vault proxy on the same machine.
 
 ## Step 3: Create the access bundle
 
@@ -151,43 +143,104 @@ The Slack app sends two tokens to Slack. The bot token goes on API calls, and th
 
 Keep the client ID and client secret. The client secret is the only real secret the agent's machine holds.
 
-## Step 5: Run the agent locally
+## Step 5: Deploy the agent
 
-Run it locally to test it. For anything longer, deploy it, so the agent's shell runs on a machine of its own.
+Deploy the agent with Docker or on a VM. Either way, the agent and the proxy run side by side, and the agent needs no inbound port, because Socket Mode connects out to Slack.
 
-1. From this folder, install the dependencies and check the types:
+### With Docker
 
-   ```
-   npm install
-   npm run typecheck
-   ```
+The agent's image has Node.js, `git`, `gh`, the Infisical CLI, and Claude Code. If the repo's tests need another toolchain, such as Python or Go, install it in [`Dockerfile`](Dockerfile).
 
-2. Copy `.env.example` to `.env`, and fill in the settings from [What you need](#what-you-need). Leave the placeholders as they are.
+1. In this folder, copy `.env.example` to `.env`, and fill in the settings from [What you need](#what-you-need). Leave the placeholders as they are.
 
-3. With the proxy from Step 2 running, log in as the machine identity and ask the agent one question without Slack:
+2. Copy the template for the secret file, and keep the copy out of git:
 
    ```
-   export INFISICAL_UNIVERSAL_AUTH_CLIENT_ID=<client-id>
-   export INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET=<client-secret>
-   export INFISICAL_AGENT_VAULT_PROJECT_ID=<agent-vault-project-id>
-   infisical agent-vault run --access-bundle coding --proxy localhost:17323 \
-     --ca-fingerprint <fingerprint> \
-     -- npm run ask -- "What does this repo do, and how are its tests run?"
+   cp docker/agent-vault.env.example docker/agent-vault.env
    ```
 
-   If you use Infisical outside US Cloud, also set `INFISICAL_DOMAIN`, such as `https://eu.infisical.com`.
+3. Fill in `docker/agent-vault.env` with the proxy token, the machine identity's client ID and client secret, the Agent Vault project ID, and the proxy's fingerprint. If you use Infisical outside US Cloud, add `INFISICAL_DOMAIN`, such as `https://eu.infisical.com`.
 
-4. Replace `npm run ask -- "..."` with `npm start` to start the Slack bot, then mention the bot in its channel.
+4. Start the proxy and the agent:
 
-Claude Code works in `~/coding-agent`. On your own machine, it also loads your `~/.claude` settings. The session ends when the agent exits.
+   ```
+   cd docker
+   docker compose --env-file agent-vault.env up --build
+   ```
 
-## Step 6: Deploy
+5. Mention the bot in its channel.
 
-- [Virtual machine](vm): the agent and the proxy as systemd services on a Linux VM
+Claude Code runs as the `node` user, and works in `/home/node/coding-agent/` inside the container. The agent's clone of the repo is lost when the container is replaced, and Claude Code clones it again on the next message.
+
+To run the same image on another container platform, such as ECS or Render, set the variables from `docker/compose.yaml` on the agent's service. Set `INFISICAL_AGENT_VAULT_PROXY_ADDRESS` to the proxy's address on your private network.
+
+### On a VM
+
+The agent and the proxy run as two systemd services. Give the VM to the agent alone.
+
+1. Connect to the VM, and install Node.js 24, the Infisical CLI, `git`, the GitHub CLI, and Claude Code:
+
+   ```
+   curl -fsSL https://deb.nodesource.com/setup_24.x | sudo bash -
+   curl -1sLf 'https://artifacts-cli.infisical.com/setup.deb.sh' | sudo bash
+   sudo curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg
+   echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list
+   sudo apt-get update
+   sudo apt-get install -y nodejs infisical=0.45.13 git gh
+   sudo npm install -g @anthropic-ai/claude-code@2.1.330
+   ```
+
+2. Create a user for the agent, and clone this repo:
+
+   ```
+   sudo useradd --create-home --shell /usr/sbin/nologin agent
+   sudo git clone https://github.com/Infisical/agent-reference-architectures.git /opt/agent-reference-architectures
+   cd /opt/agent-reference-architectures/slack-agents/coding
+   sudo npm ci --omit=dev
+   ```
+
+   The repo stays owned by root, so the agent can't change the bridge or its own prompt.
+
+3. Copy `.env.example` to `.env`, and fill in the settings from [What you need](#what-you-need). Leave the placeholders as they are:
+
+   ```
+   sudo cp .env.example .env
+   ```
+
+4. Create the two files that hold secrets, readable only by root. Replace `<proxy-token>` with the proxy token from [Step 2](#step-2-create-the-proxy):
+
+   ```
+   sudo mkdir -p /etc/infisical
+   echo 'INFISICAL_AGENT_VAULT_PROXY_TOKEN=<proxy-token>' | sudo tee /etc/infisical/agent-vault-proxy.env
+   sudo cp vm/coding-agent.env.example /etc/infisical/coding-agent.env
+   sudo chmod 600 /etc/infisical/*.env
+   ```
+
+5. Fill in `/etc/infisical/coding-agent.env` with the machine identity's client ID and client secret, the Agent Vault project ID, and the proxy's fingerprint. If you use Infisical outside US Cloud, add `INFISICAL_DOMAIN` to both files.
+
+   If `nano` or `vim` fails with `Error opening terminal`, the VM doesn't know your terminal emulator. Run `export TERM=xterm-256color` and try again.
+
+6. Install and start the proxy and the agent:
+
+   ```
+   sudo cp vm/agent-vault-proxy.service vm/coding-agent.service /etc/systemd/system/
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now agent-vault-proxy coding-agent
+   ```
+
+7. Check the agent's log, then mention the bot in its channel:
+
+   ```
+   journalctl -u coding-agent -f
+   ```
+
+The agent runs as the `agent` user, which can't open the secret files. systemd passes the agent's client secret to its processes as an environment variable, so the agent can read it. That's by design, as [Agent Vault configuration](#agent-vault-configuration) explains. The proxy runs as root, so the agent can't read the proxy token.
+
+Claude Code works in `/home/agent/coding-agent/`, and runs commands with the `agent` user's permissions.
 
 ## Limits
 
 - The agent handles one message at a time, because each run uses the same working folder. A long change holds up everyone else's messages until it finishes or times out after 20 minutes
 - Everyone who can use the agent shares its access and its session. The bot checks the allowlist and channel itself, and Agent Vault doesn't know who in Slack asked
-- With a shell, the agent can send requests that skip the proxy. It gets no credentials that way, but it can reach hosts outside the access bundle. The VM deployment doesn't block that yet
+- With a shell, the agent can send requests that skip the proxy. It gets no credentials that way, but it can reach hosts outside the access bundle. The Docker and VM deployments don't block that yet
 - Claude Code loads `CLAUDE.md` and `.claude/` settings from the cloned repo, and runs the repo's tests. Point the agent only at a repo whose contents you trust

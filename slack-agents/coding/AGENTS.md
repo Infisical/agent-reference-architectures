@@ -9,11 +9,7 @@ Run from this folder:
 ```
 npm ci
 npm run typecheck
-npm run ask -- "<question>"   # one question, no Slack
-npm start                     # the Slack bot
 ```
-
-`ask` and `start` need Claude Code installed, and only work inside `infisical agent-vault run --access-bundle ...`, which routes their traffic through the proxy.
 
 ## How it works
 
@@ -24,15 +20,11 @@ npm start                     # the Slack bot
 
 ## Setting it up for a person
 
-1. Ask the person to complete steps 1 to 4 of the README in Slack and Agent Vault. Give them the exact names: the `coding` access bundle, its three services, and the placeholders `xoxb-avplaceholder-coding-bot` and `xapp-avplaceholder-coding-app`. If they use other names, use theirs in `.env` and the run commands.
+1. Ask the person to complete steps 1 to 4 of the README in Slack and Agent Vault. Give them the exact names: the `coding` access bundle, its three services, and the placeholders `xoxb-avplaceholder-coding-bot` and `xapp-avplaceholder-coding-app`. If they use other names, use theirs in `.env` and the deployment files.
 2. Ask for the settings that aren't secret, and write them to `.env` from `.env.example`. Never ask for the tokens or the client secret.
-3. Have the person start the proxy with their proxy token, in their own terminal.
-4. Have the person run the one-question test from README Step 5 in their own terminal, with the client ID and client secret exported. An answer that describes the repo confirms the session, Anthropic, and GitHub.
-5. Have them run `npm start` the same way and mention the bot in its channel. A reply confirms Slack.
-6. Check the block. Asking for a host outside the bundle, such as `api.open-meteo.com`, should come back refused by the proxy.
-7. Deploy with `vm/`. Stop the local bot first, because two connections to one Slack app split its events.
-
-If the person can't upgrade the Infisical CLI with Homebrew, `npx @infisical/cli@0.45.13` runs the same CLI.
+3. Deploy with Step 5 of the README, with Docker or on a VM. The person fills in the secret file themselves.
+4. Have the person mention the bot in its channel and ask what the repo does and how its tests run. An answer that describes the repo confirms the session, Slack, Anthropic, and GitHub.
+5. Check the block. Asking for a host outside the bundle, such as `api.open-meteo.com`, should come back refused by the proxy.
 
 ## Failures and their causes
 
