@@ -1,0 +1,22 @@
+[Unit]
+Description=Recruiting agent
+After=network-online.target agent-vault-proxy.service
+Wants=network-online.target agent-vault-proxy.service
+
+[Service]
+User=agent
+WorkingDirectory=/opt/agent-reference-architectures/slack-agents/recruiting
+EnvironmentFile=/etc/infisical/recruiting-agent.env
+ExecStart=/usr/bin/infisical agent-vault run \
+  --access-bundle recruiting \
+  --proxy localhost:17323 \
+  --ca-fingerprint ${INFISICAL_AGENT_VAULT_CA_FINGERPRINT} \
+  --label "recruiting agent" \
+  -- /usr/bin/node src/main.ts
+Restart=always
+RestartSec=5
+# The CLI exits 143 on SIGTERM after revoking the session, which is a clean stop.
+SuccessExitStatus=143
+
+[Install]
+WantedBy=multi-user.target
