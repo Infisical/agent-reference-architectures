@@ -14,6 +14,7 @@ interface SlackUser {
 }
 
 const USER_CACHE_MS = 10 * 60_000;
+const THREAD_MAX_MESSAGES = 200;
 
 type Trigger =
   /** A mention or a DM: shows progress, and replies even to say it can't help. */
@@ -40,7 +41,6 @@ export async function startSlackBot(config: Config, runner: Runner): Promise<App
   const muted = new Set<string>();
   const threadKey = (channel: string, threadTs: string) => `${channel}:${threadTs}`;
 
-  // One message per thread at a time, so each run reads the answers to the messages before it.
   const threadQueues = new Map<string, Promise<void>>();
   function inThreadOrder(key: string, work: () => Promise<void>): Promise<void> {
     const next = (threadQueues.get(key) ?? Promise.resolve()).then(work);
@@ -58,8 +58,7 @@ export async function startSlackBot(config: Config, runner: Runner): Promise<App
     if (cached && cached.expires > Date.now()) return cached.user;
     try {
       const { user } = await client.users.info({ user: userId });
-      // In a Slack Connect channel, another workspace's admin can put any email on their users' profiles,
-      // so only people in this workspace, or in its Enterprise Grid organization, get acted for.
+      // In Slack Connect, another workspace's admin can put any email on their users' profiles.
       const external = user?.team_id !== teamId && !(enterpriseId && user?.enterprise_user?.enterprise_id === enterpriseId);
       const found: SlackUser = {
         name: user?.profile?.display_name || user?.profile?.real_name || user?.real_name || user?.name,
@@ -77,8 +76,14 @@ export async function startSlackBot(config: Config, runner: Runner): Promise<App
 
   async function threadMessages(client: SlackClient, channel: string, threadTs: string) {
     try {
-      const { messages } = await client.conversations.replies({ channel, ts: threadTs, limit: 200 });
-      return messages ?? [];
+      const messages = [];
+      let cursor: string | undefined;
+      do {
+        const page = await client.conversations.replies({ channel, ts: threadTs, limit: 200, cursor });
+        messages.push(...(page.messages ?? []));
+        cursor = page.response_metadata?.next_cursor || undefined;
+      } while (cursor);
+      return messages.length > THREAD_MAX_MESSAGES ? [messages[0], ...messages.slice(-(THREAD_MAX_MESSAGES - 1))] : messages;
     } catch (err) {
       // missing_scope means the app needs channels:history, groups:history or im:history.
       console.error("Failed to read the thread:", (err as { data?: { error?: string } }).data?.error ?? err);
@@ -96,7 +101,6 @@ export async function startSlackBot(config: Config, runner: Runner): Promise<App
   ) {
     const lines: string[] = [];
     const messages = await threadMessages(client, channel, threadTs);
-    // A thread longer than one page of history doesn't include the newest message, so add it.
     if (!messages.some((m) => m.ts === latest.ts)) messages.push({ ts: latest.ts, user: requesterId, text: latest.text });
     for (const m of messages) {
       if (!m.text) continue;
@@ -157,7 +161,6 @@ export async function startSlackBot(config: Config, runner: Runner): Promise<App
       .join("\n\n");
 
     const placeholder = trigger === "direct" ? (await reply("Thinking…")).ts : undefined;
-    // Only the newest status is posted, so a backlog of updates can't hold up the answer.
     let latest: string | undefined;
     let progress: Promise<void> = Promise.resolve();
     let posting = false;
@@ -254,12 +257,14 @@ export async function startSlackBot(config: Config, runner: Runner): Promise<App
     // Without a key for the check, every reply in the bot's threads would start a run, so none do.
     const threadTs = message.thread_ts;
     if (!config.anthropicApiKey || !threadTs || text.includes(botMention) || /<@|<!(here|channel|everyone|subteam)/.test(text)) return;
-    if (muted.has(threadKey(message.channel, threadTs))) return;
-    const thread = await threadMessages(client, message.channel, threadTs);
-    if (!thread.some((m) => m.user === botUserId)) return;
-    void inThreadOrder(threadKey(message.channel, threadTs), () =>
-      handle(client, { ...base, channelType: message.channel_type, threadTs, trigger: "background" }),
-    ).catch((err) => console.error("Failed to handle a thread reply:", err));
+    const key = threadKey(message.channel, threadTs);
+    // Queued before any await to keep replies in order. A run ahead of it can mute the thread.
+    void inThreadOrder(key, async () => {
+      if (muted.has(key)) return;
+      const thread = await threadMessages(client, message.channel, threadTs);
+      if (!thread.some((m) => m.user === botUserId)) return;
+      await handle(client, { ...base, channelType: message.channel_type, threadTs, trigger: "background" });
+    }).catch((err) => console.error("Failed to handle a thread reply:", err));
   });
 
   await app.start();

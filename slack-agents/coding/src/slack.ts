@@ -22,9 +22,7 @@ export async function startSlackBot(agent: Agent): Promise<void> {
   const botToken = requireEnv("SLACK_BOT_TOKEN");
   const appToken = requireEnv("SLACK_APP_TOKEN");
 
-  // The proxy swaps the placeholder token only in headers, never in a request body. Bolt's own
-  // auth.test sends the token in the body, so the bot's IDs come from a header-authenticated call
-  // and Bolt's token verification stays off.
+  // The proxy swaps the token only in headers, and Bolt's own auth.test sends it in the body.
   const identity = await new WebClient(botToken).auth.test();
   const botUserId = identity.user_id;
   const app = new App({

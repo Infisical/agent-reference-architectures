@@ -10,14 +10,12 @@ import {
   type Sandboxes,
 } from "./sandbox.ts";
 
-// The sidecar's name is also its hostname inside the sandbox.
 const PROXY_SIDECAR = "agent-proxy";
 const PROXY_PORT = 17323;
 const PROXY_ADDRESS = `${PROXY_SIDECAR}:${PROXY_PORT}`;
 
 const IDLE_TIMEOUT_MS = 5 * 60_000;
 
-// The proxy token comes from the environment, never an argument, so it stays out of the process list.
 const PROXY_COMMAND = `exec infisical agent-vault proxy --data-dir /tmp/proxy --port ${PROXY_PORT} --telemetry=false >/tmp/proxy.log 2>&1`;
 
 const WAIT_FOR_PROXY = `for i in $(seq 60); do curl -fs http://127.0.0.1:${PROXY_PORT}/_agent-vault/ca >/dev/null && exit 0; sleep 0.5; done; tail -n 20 /tmp/proxy.log; exit 1`;

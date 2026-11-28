@@ -19,7 +19,6 @@ export function parseStreamLine(line: string): StreamEvent {
 
   if (event.type === "result") {
     const isError = event.is_error === true || event.subtype !== "success";
-    // A failed run can explain itself in `errors` and leave `result` empty.
     const errors = Array.isArray(event.errors) ? event.errors.filter((e): e is string => typeof e === "string") : [];
     const text = typeof event.result === "string" && event.result ? event.result : errors.join("\n");
     return { kind: "result", text, isError };
@@ -36,7 +35,6 @@ export function parseStreamLine(line: string): StreamEvent {
   return { kind: "other" };
 }
 
-/** Null keeps the last status line. */
 export function progressLabel({ name, input }: ToolUse): string | null {
   const text = (key: string) => (typeof input[key] === "string" ? (input[key] as string) : "");
   const file = (key: string) => text(key).split("/").pop() || "a file";

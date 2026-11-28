@@ -7,7 +7,7 @@ import { createSandboxes, SANDBOX_USER } from "./sandbox.ts";
 import { createVault } from "./vault.ts";
 
 loadEnv();
-const config = loadConfig();
+const config = { ...loadConfig(), sandboxRole: "smoke" as const };
 const sandboxes = await createSandboxes(config);
 const args = process.argv.slice(2);
 console.log(`Sandbox platform: ${config.sandboxProvider}`);
@@ -35,7 +35,6 @@ if (args[0] === "--preflight") {
       if (line.startsWith("PASS")) passed++;
     }
     const { code, stderr } = await exec.done;
-    // A probe that exits early prints no FAIL line either, so only a clean exit with every check passing counts.
     const ok = code === 0 && passed === probe.split("\n").length;
     if (!ok) console.log(`FAIL the probe exited with code ${code} after ${passed} passing check(s)${stderr ? `:\n${stderr.trim()}` : ""}`);
     process.exitCode = ok ? 0 : 1;

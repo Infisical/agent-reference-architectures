@@ -33,11 +33,11 @@ export interface Config {
   caFingerprint: string;
   sandboxProvider: "modal" | "daytona";
   deploymentName: string;
+  sandboxRole: "run" | "smoke";
   modalAppName: string;
   maxSandboxes: number;
   runTimeoutMs: number;
   model?: string;
-  /** Unset turns off replies to thread messages that don't mention the bot. */
   anthropicApiKey?: string;
   prompt: string;
   mcpConfig: string;
@@ -56,6 +56,7 @@ export function loadConfig(): Config {
     caFingerprint: requireEnv("INFISICAL_AGENT_VAULT_CA_FINGERPRINT"),
     sandboxProvider: sandboxProvider(),
     deploymentName: process.env.DEPLOYMENT_NAME?.trim() || "team-assistant",
+    sandboxRole: "run",
     modalAppName: process.env.MODAL_APP_NAME?.trim() || "team-assistant",
     maxSandboxes: numberEnv("MAX_SANDBOXES", 3),
     runTimeoutMs: numberEnv("RUN_TIMEOUT_MINUTES", 10) * 60_000,

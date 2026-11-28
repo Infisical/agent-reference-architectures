@@ -17,7 +17,6 @@ const PROXY_PORT = 17323;
 /** Named after the versions it installs, so a version change builds a new snapshot. */
 const SNAPSHOT = `team-assistant-claude-${CLAUDE_CODE_VERSION}-cli-${INFISICAL_CLI_VERSION}`.replaceAll(".", "-");
 
-// The address on the linked network appears shortly after linking, so this retries.
 const GET_LINK_ADDRESS =
   "for i in $(seq 60); do ip -4 -o addr show eth1 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | grep . && exit 0; sleep 0.5; done; exit 1";
 

@@ -14,8 +14,11 @@ export const IMAGE_COMMANDS = [
   `useradd --create-home --shell /bin/bash ${SANDBOX_USER} && install -d -o ${SANDBOX_USER} -g ${SANDBOX_USER} ${WORKSPACE_DIR}`,
 ];
 
-// The deployment's name keeps the startup sweep from deleting another deployment's sandboxes.
-export const sandboxTags = (config: Pick<Config, "deploymentName">) => ({ app: "team-assistant", deployment: config.deploymentName });
+export const sandboxTags = (config: Pick<Config, "deploymentName" | "sandboxRole">) => ({
+  app: "team-assistant",
+  deployment: config.deploymentName,
+  role: config.sandboxRole,
+});
 
 export const SANDBOX_MARGIN_MS = 5 * 60_000;
 
@@ -26,7 +29,6 @@ export interface ExecResult {
 
 export interface Sandboxes<H extends { id: string } = { id: string }> {
   prepare(): Promise<string>;
-  /** `onCreated` gets the sandbox as soon as there's something to clean up. */
   create(onCreated: (sandbox: H) => void): Promise<H>;
   /** Secrets such as the session token go in `input`, never in `script`. */
   exec(sandbox: H, script: string, input: string): Promise<ExecResult>;

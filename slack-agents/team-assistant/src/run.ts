@@ -6,12 +6,9 @@ import type { Vault } from "./vault.ts";
 // A session outlives its run's timeout by this much, so cleanup never races its expiry.
 const SESSION_MARGIN_MINUTES = 5;
 
-const SHUTDOWN_WAIT_MS = 60_000;
-
 type Run = { sessionId?: string; sandbox?: { id: string } };
 
 export interface RunRequest {
-  /** The session acts on behalf of the Infisical user with this email. */
   email: string;
   label: string;
   prompt: string;
@@ -21,8 +18,7 @@ export interface RunRequest {
 
 export const shellQuote = (text: string) => `'${text.replaceAll("'", `'\\''`)}'`;
 
-// The script holds no secrets. stdin carries the session token on its first line, the MCP config on
-// its second, and the prompt after that.
+// Secrets come on stdin, never in the script: the session token, the MCP config, then the prompt.
 export function bootstrapScript(config: Pick<Config, "prompt" | "caFingerprint" | "model">): string {
   const prompt = Buffer.from(config.prompt).toString("base64");
   const claude = [
@@ -113,7 +109,6 @@ export function createRunner({ config, vault, sandboxes }: { config: Config; vau
       checkStopping();
       await sandboxes.create((sandbox) => (run.sandbox = sandbox));
       checkStopping();
-      // The agent's shell has the session token, so anything it prints could carry it to Slack or the logs.
       const mask = (text: string) => text.replaceAll(session.token, "[session token]");
 
       const exec = await sandboxes.exec(run.sandbox!, script, `${session.token}\n${config.mcpConfig}\n${prompt}`);
@@ -158,11 +153,10 @@ export function createRunner({ config, vault, sandboxes }: { config: Config; vau
       return task;
     },
 
-    // Waits for runs still creating a session or a sandbox, so nothing they create afterward is left behind.
     async stopAll(): Promise<void> {
       stopping = true;
       await Promise.all([...active].map(cleanUp));
-      await Promise.race([Promise.allSettled([...pending]), new Promise((resolve) => setTimeout(resolve, SHUTDOWN_WAIT_MS))]);
+      await Promise.allSettled([...pending]);
     },
   };
 }

@@ -1,20 +1,20 @@
-// Slack collapses long messages, so long answers go out as several replies.
 export const SLACK_MAX_CHARS = 3900;
 
 const FENCE = "```";
+const MAX_OPENER = 32;
 
-// A code block cut by a break is closed and reopened, so both halves keep their formatting.
+const fenceCount = (line: string) => line.split(FENCE).length - 1;
+
 export function chunkText(text: string, max = SLACK_MAX_CHARS): string[] {
-  // Room for the fence that closes a chunk and the one that reopens the next.
-  const limit = max - (FENCE.length + 1) * 2;
+  const limit = max - (FENCE.length + 1) - (MAX_OPENER + 1);
   const chunks: string[] = [];
   let current = "";
-  let inFence = false;
+  let opener: string | undefined;
 
   const flush = () => {
     if (!current) return;
-    chunks.push(inFence ? `${current}\n${FENCE}` : current);
-    current = inFence ? FENCE : "";
+    chunks.push(opener ? `${current}\n${FENCE}` : current);
+    current = opener ?? "";
   };
 
   for (const line of text.split("\n")) {
@@ -25,11 +25,15 @@ export function chunkText(text: string, max = SLACK_MAX_CHARS): string[] {
         flush();
       }
     } else {
-      if (current && current.length + line.length + 1 > limit) flush();
+      if (current && current !== opener && current.length + line.length + 1 > limit) flush();
       current = current ? `${current}\n${line}` : line;
     }
-    if (line.trimStart().startsWith(FENCE)) inFence = !inFence;
+    // ```npm install``` on one line opens and closes a block.
+    if (fenceCount(line) % 2 === 1) {
+      const trimmed = line.trim();
+      opener = opener ? undefined : trimmed.startsWith(FENCE) && trimmed.length <= MAX_OPENER ? trimmed : FENCE;
+    }
   }
-  if (current && current !== FENCE) chunks.push(current);
+  if (current && current !== opener) chunks.push(current);
   return chunks.length > 0 ? chunks : [""];
 }

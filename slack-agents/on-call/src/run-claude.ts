@@ -38,13 +38,12 @@ async function runOnce(agent: Agent, prompt: string, onProgress?: (label: string
     },
     stdio: ["pipe", "pipe", "inherit"],
   });
-  // An unhandled error event, such as a failure to start, would crash the bridge.
+  // Without these handlers, a failed start or an early exit crashes the bridge.
   const exited = new Promise<number | null>((resolve, reject) => {
     child.once("error", reject);
     child.once("close", resolve);
   });
   exited.catch(() => {});
-  // An early exit fails the write, and the exit code reports it instead.
   child.stdin.on("error", () => {});
   // On stdin, because a long Slack thread can outgrow the limit on one argument.
   child.stdin.end(prompt);

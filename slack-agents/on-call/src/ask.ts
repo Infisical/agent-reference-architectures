@@ -1,4 +1,3 @@
-// npm run ask -- "What can you do?"
 import { loadAgent } from "./config.ts";
 
 const prompt = process.argv[2] ?? "What can you do?";
