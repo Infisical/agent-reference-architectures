@@ -1,0 +1,9 @@
+services:
+  orchestrator:
+    build: ..
+    env_file:
+      - ../.env
+      - team-assistant.env
+    restart: unless-stopped
+    # Shutdown waits for runs still creating a sandbox.
+    stop_grace_period: 2m

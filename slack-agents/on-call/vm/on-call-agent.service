@@ -1,0 +1,22 @@
+[Unit]
+Description=On-call agent
+After=network-online.target agent-vault-proxy.service
+Wants=network-online.target agent-vault-proxy.service
+
+[Service]
+User=agent
+WorkingDirectory=/opt/agent-reference-architectures/slack-agents/on-call
+EnvironmentFile=/etc/infisical/on-call-agent.env
+ExecStart=/usr/bin/infisical agent-vault run \
+  --access-bundle on-call \
+  --proxy localhost:17323 \
+  --ca-fingerprint ${INFISICAL_AGENT_VAULT_CA_FINGERPRINT} \
+  --label "on-call agent" \
+  -- /usr/bin/node src/main.ts
+Restart=always
+RestartSec=5
+# The CLI exits 143 on SIGTERM after revoking the session, which is a clean stop.
+SuccessExitStatus=143
+
+[Install]
+WantedBy=multi-user.target

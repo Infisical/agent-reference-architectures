@@ -1,0 +1,159 @@
+# On-call agent
+
+A Slack agent that investigates production errors. Mention it in a channel, and it reads the error in Sentry, traces it to the code and the commit that caused it, and proposes a fix. When you ask, it opens a pull request with the fix or files a GitHub issue.
+
+The agent is Claude Code, running in a clone of your repo with a shell. It holds no real API keys. [Infisical Agent Vault](https://infisical.com/docs/documentation/platform/agent-vault/overview) attaches each credential to the agent's requests on their way out, and blocks requests to any host outside the agent's access bundle.
+
+## How it works
+
+```mermaid
+flowchart LR
+  slack[Slack]
+  subgraph box[The agent's machine]
+    bridge["Slack bridge"]
+    claude["Claude Code<br/>in a clone of the repo"]
+  end
+  proxy[Agent Vault proxy]
+  vault["Infisical Agent Vault<br/>identity, access bundle,<br/>credentials, session logs"]
+  apis["Slack, Anthropic,<br/>GitHub, Sentry"]
+
+  slack -- "@mention" --> bridge
+  bridge -- "claude -p" --> claude
+  bridge & claude -- "all HTTPS" --> proxy
+  proxy -- "real credential attached" --> apis
+  bridge -. "log in, open session" .-> vault
+  proxy -. "check session, fetch credential" .-> vault
+```
+
+1. `infisical agent-vault run` logs in as the agent's machine identity, opens a [session](https://infisical.com/docs/documentation/platform/agent-vault/sessions) on the `on-call` [access bundle](https://infisical.com/docs/documentation/platform/agent-vault/access-bundles), and starts the Slack bridge behind the Agent Vault [proxy](https://infisical.com/docs/documentation/platform/agent-vault/proxies).
+2. When someone mentions the bot, the bridge runs `claude -p` with the message. Claude Code inherits the proxy settings, so all of its HTTPS traffic goes through the proxy, including `git`, `gh`, and its calls to the Sentry API.
+3. If the host is in the access bundle, the proxy attaches the real credential. If it isn't, the proxy returns a 403.
+4. The bridge posts what Claude Code is doing as a status line in Slack, then posts its answer in the thread.
+
+The code in this repo never calls Infisical, and holds no keys. The agent's environment has only placeholders, such as `SLACK_BOT_TOKEN=xoxb-avplaceholder-on-call-bot` and `GH_TOKEN=placeholder`. Claude Code, `gh`, and the Slack SDK each refuse to start without a token, so they get a placeholder, which the proxy replaces.
+
+## What's in this folder
+
+| File | What it does |
+| --- | --- |
+| `prompt.md` | The agent's instructions, added to Claude Code's system prompt |
+| `.env.example` | The agent's settings |
+| `slack-app-manifest.yaml` | The Slack app |
+| `src/` | The Slack bridge: reads Slack and runs `claude -p` for each message |
+| `Dockerfile` | The agent's image, with the Infisical CLI, Claude Code, `git`, and `gh` |
+| `docker/`, `vm/` | The deployments |
+
+Claude Code works in `~/on-call-agent`, where it keeps its clone of the repo between messages. It runs in `bypassPermissions` mode, so it can run any command without asking. The machine it runs on is the boundary. Run it on a machine of its own, such as the [Docker](docker) or [VM](vm) deployment.
+
+The agent reaches GitHub with `gh` and `git`, and Sentry through its REST API. To give the agent an MCP server instead, add its service to the access bundle, and list the server in an `mcp.json` in this folder, with a placeholder token that the proxy replaces. The bridge passes `mcp.json` to Claude Code when the file exists.
+
+## Agent Vault configuration
+
+**Access bundle:** `on-call`, with these services:
+
+| Service | Template | Hosts | Credential |
+| --- | --- | --- | --- |
+| Anthropic | Anthropic | `api.anthropic.com` | An Anthropic API key |
+| GitHub | GitHub | The template's hosts, which include `github.com` for `git` | A fine-grained personal access token for the repo |
+| Sentry | Sentry | `sentry.io` | A Sentry internal integration token |
+| Slack | Slack | `slack.com, *.slack.com` | Pass-through, with two header [substitutions](https://infisical.com/docs/documentation/platform/agent-vault/services#substitutions) for the bot token and the app-level token |
+
+**Machine identity:** `on-call-agent`, with the Member role in Agent Vault and access to the `on-call` access bundle only.
+
+**Proxy:** one proxy with the **Service hosts only** traffic policy.
+
+The machine identity's client secret is on the agent's machine, so the agent can read it and open more sessions. That's by design. A Member can only open sessions on the access bundles it's granted, so a session the agent opens for itself reaches nothing the first one didn't. Two consequences:
+
+- Grant the identity this one access bundle only, and keep its role at Member
+- Revoking the agent's session doesn't stop it, because it can open another one. To stop the agent, revoke the client secret
+
+To limit where a leaked client secret works, restrict it to the agent's machine with [trusted IPs](https://infisical.com/docs/documentation/platform/identities/universal-auth), and give it an expiry.
+
+## What you need
+
+**Accounts and tools:**
+
+- An Infisical organization with Agent Vault, and the Admin role in an Agent Vault project
+- A Slack workspace where you can create apps
+- A Sentry project, and a GitHub repo with at least one commit
+- Somewhere to deploy the agent: Docker with Compose, or a Debian or Ubuntu VM with outbound internet access and `sudo`
+
+**Credentials.** Each one goes into Agent Vault, never into a file or the agent's environment:
+
+| Credential | Where to get it | Where it goes |
+| --- | --- | --- |
+| Anthropic API key | The Anthropic Console | The Anthropic service |
+| GitHub fine-grained personal access token for the repo, with Contents, Issues, and Pull requests read and write | GitHub's **Settings** > **Developer settings** > **Personal access tokens** > **Fine-grained tokens** | The GitHub service |
+| Sentry internal integration token, with read access to projects, issues, and events | An internal integration in Sentry's organization settings | The Sentry service |
+| Slack bot token (`xoxb-...`) and app-level token (`xapp-...`) | The Slack app, in [Step 1](#step-1-create-the-slack-app) | The Slack service's substitutions |
+
+**Secrets for running the agent.** Each one goes into the deployment's secret file, never into git:
+
+| Secret | Where to get it |
+| --- | --- |
+| Proxy token | The **Proxy Token** dialog, in [Step 2](#step-2-create-the-proxy) |
+| Machine identity client ID and client secret | The machine identity, in [Step 4](#step-4-create-the-machine-identity) |
+
+**Settings that aren't secret.** They go into `.env`:
+
+| Setting | Where to get it |
+| --- | --- |
+| `AGENT_CHANNEL_ID` | The Slack channel's details |
+| `AGENT_ALLOWLIST` | The emails on the Slack profiles of the people who can use the agent |
+| `GITHUB_REPO` | The repo, as `owner/repo` |
+| `SENTRY_ORG`, `SENTRY_PROJECT` | The org and project slugs in Sentry's URLs |
+| `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME`, `GIT_COMMITTER_EMAIL` | The name and email the agent's commits show. GitHub links a commit to an account only if its email is verified on that account, so use one of the token owner's emails, such as the `noreply` address from GitHub's email settings |
+
+You also need the Agent Vault project's ID and the proxy's fingerprint, which aren't secret either. The deployment's secret file holds them, next to the secrets.
+
+## Step 1: Create the Slack app
+
+1. Go to [api.slack.com/apps](https://api.slack.com/apps) and select **Create New App** > **From a manifest**.
+2. Paste [`slack-app-manifest.yaml`](slack-app-manifest.yaml) and select **Create**.
+3. Install the app to your workspace, then copy the **Bot User OAuth Token** (`xoxb-...`) from **OAuth & Permissions**.
+4. In **Basic Information** > **App-Level Tokens**, create a token with the `connections:write` scope and copy it (`xapp-...`).
+5. Invite the bot to the channel where it should answer, and copy the channel ID from the channel's details.
+
+The app uses Socket Mode, so the agent doesn't need a public URL.
+
+## Step 2: Create the proxy
+
+1. In Agent Vault, go to **Proxies** and select **Create Proxy**.
+2. Enter a **Name**, expand **Advanced Options**, and set **Traffic Policy** to **Service hosts only**. With **Any host**, the proxy forwards requests to hosts outside the access bundle instead of blocking them.
+3. If the agent needs to install packages, add the registries it uses to **Exceptions**, such as `registry.npmjs.org`. The proxy lets them through without a credential.
+4. Select **Create**. The **Proxy Token** dialog shows the proxy token, with commands to run the proxy with the CLI, systemd, Docker, or Kubernetes.
+5. Keep the proxy token. You can rotate it later from the proxy's menu. Rotating it also changes the proxy's fingerprint, so update the fingerprint wherever the agent runs.
+6. Copy the proxy's fingerprint from the **Certificate Authority** column on the **Proxies** page. The agent uses it to check that it's talking to your proxy.
+
+## Step 3: Create the access bundle
+
+1. Go to **Access Bundles** and select **Create Access Bundle**. Name it `on-call`.
+2. Open the access bundle and select **Add Service**. Add the Anthropic, GitHub, and Sentry services from their templates, and paste each credential.
+
+The Slack app sends two tokens to Slack. The bot token goes on API calls, and the app-level token opens the Socket Mode connection. A single credential would send the bot token on both, so the Slack service uses substitutions:
+
+1. Add a service from the **Slack** template.
+2. On the **Details** step, add `*.slack.com` to **Hosts**. The Socket Mode connection uses a subdomain of `slack.com`.
+3. On the **Credential** step, set the credential type to **Pass-through**.
+4. Expand **Advanced Options** and select **Add Substitution**. Enter `xoxb-avplaceholder-on-call-bot` in **Replace**, enter the bot token in **With**, and keep **Headers** selected under **Replace In**.
+5. Add a second substitution that replaces `xapp-avplaceholder-on-call-app` with the app-level token.
+
+## Step 4: Create the machine identity
+
+1. Create a [machine identity](https://infisical.com/docs/documentation/platform/identities/machine-identities) named `on-call-agent` with Universal Auth, and create a client secret for it.
+2. In Agent Vault, go to **Access Control** > **Machine Identities** and select **Add Machine Identity**. Select the identity and choose **Member** in **Product Role**.
+3. Open the `on-call` access bundle, select **Manage Access**, and select **Grant Access** next to the identity.
+
+Keep the client ID and client secret. The client secret is the only real secret the agent's machine holds.
+
+## Step 5: Deploy
+
+- [Docker](docker): the agent and the proxy with Docker Compose
+- [Virtual machine](vm): the agent and the proxy as systemd services on a Linux VM
+
+## Limits
+
+- The agent handles one message at a time, because each run uses the same working folder
+- Everyone who can use the agent shares its access and its session. The bot checks the allowlist and channel itself, and Agent Vault doesn't know who in Slack asked
+- With a shell, the agent can send requests that skip the proxy. It gets no credentials that way, but it can reach hosts outside the access bundle. The Docker and VM deployments don't block that yet
+- Claude Code loads `CLAUDE.md` and `.claude/` settings from the cloned repo. Point the agent only at a repo whose contents you trust

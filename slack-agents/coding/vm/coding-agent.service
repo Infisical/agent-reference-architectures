@@ -1,0 +1,22 @@
+[Unit]
+Description=Coding agent
+After=network-online.target agent-vault-proxy.service
+Wants=network-online.target agent-vault-proxy.service
+
+[Service]
+User=agent
+WorkingDirectory=/opt/agent-reference-architectures/slack-agents/coding
+EnvironmentFile=/etc/infisical/coding-agent.env
+ExecStart=/usr/bin/infisical agent-vault run \
+  --access-bundle coding \
+  --proxy localhost:17323 \
+  --ca-fingerprint ${INFISICAL_AGENT_VAULT_CA_FINGERPRINT} \
+  --label "coding agent" \
+  -- /usr/bin/node src/main.ts
+Restart=always
+RestartSec=5
+# The CLI exits 143 on SIGTERM after revoking the session, which is a clean stop.
+SuccessExitStatus=143
+
+[Install]
+WantedBy=multi-user.target

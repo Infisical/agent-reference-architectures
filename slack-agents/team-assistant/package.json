@@ -1,0 +1,27 @@
+{
+  "name": "team-assistant",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A Slack assistant that runs Claude Code in a fresh Modal sandbox for each message, acting as the person who asked, with every credential brokered by Infisical Agent Vault.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=docker/team-assistant.env src/main.ts",
+    "smoke": "node --env-file-if-exists=docker/team-assistant.env src/smoke.ts",
+    "typecheck": "tsc"
+  },
+  "dependencies": {
+    "@daytona/sdk": "0.231.1",
+    "@infisical/sdk": "5.3.1",
+    "@slack/bolt": "4.7.0",
+    "@slack/web-api": "7.15.0",
+    "modal": "0.11.1"
+  },
+  "devDependencies": {
+    "@types/node": "25.6.0",
+    "typescript": "6.0.2"
+  }
+}

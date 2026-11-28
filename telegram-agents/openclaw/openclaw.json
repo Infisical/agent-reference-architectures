@@ -1,0 +1,19 @@
+{
+  "gateway": {
+    "mode": "local",
+    "bind": "loopback"
+  },
+  "agents": {
+    "defaults": {
+      "workspace": "~/.openclaw/workspace",
+      "model": { "primary": "anthropic/claude-sonnet-5-5" }
+    }
+  },
+  "channels": {
+    "telegram": {
+      "enabled": true,
+      "dmPolicy": "allowlist",
+      "allowFrom": ["<your-telegram-user-id>"]
+    }
+  }
+}

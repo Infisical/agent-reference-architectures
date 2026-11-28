@@ -1,0 +1,27 @@
+[Unit]
+Description=Hermes gateway behind Infisical Agent Vault
+After=network-online.target agent-vault-proxy.service
+Wants=network-online.target agent-vault-proxy.service
+
+[Service]
+User=hermes
+WorkingDirectory=/home/hermes
+EnvironmentFile=/etc/infisical/hermes.env
+# Placeholders. The proxy attaches the Anthropic key and swaps the Telegram placeholder in the URL path.
+Environment=ANTHROPIC_API_KEY=agent-vault
+Environment=TELEGRAM_BOT_TOKEN=avplaceholder-hermes-telegram
+# Keeps Telegram on api.telegram.org. The proxy can't broker requests sent to Telegram's IP addresses.
+Environment=HERMES_TELEGRAM_DISABLE_FALLBACK_IPS=true
+ExecStart=/usr/bin/infisical agent-vault run \
+  --access-bundle hermes \
+  --proxy localhost:17323 \
+  --ca-fingerprint ${INFISICAL_AGENT_VAULT_CA_FINGERPRINT} \
+  --label "Hermes gateway" \
+  -- /home/hermes/.local/bin/hermes gateway run
+Restart=always
+RestartSec=5
+# The CLI exits 143 on SIGTERM after revoking the session, which is a clean stop.
+SuccessExitStatus=143
+
+[Install]
+WantedBy=multi-user.target
