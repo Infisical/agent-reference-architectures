@@ -2,10 +2,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-/** This folder, where prompt.md and mcp.json live. */
 export const AGENT_DIR = fileURLToPath(new URL("../", import.meta.url));
 
-/** Loads the folder's .env into the environment. Call before reading any setting. */
 export function loadEnv(): void {
   if (existsSync(join(AGENT_DIR, ".env"))) process.loadEnvFile(join(AGENT_DIR, ".env"));
 }
@@ -33,16 +31,15 @@ export interface Config {
   clientSecret: string;
   proxyToken: string;
   caFingerprint: string;
-  /** Where each message runs: modal (the default) or daytona. */
   sandboxProvider: "modal" | "daytona";
+  deploymentName: string;
   modalAppName: string;
   maxSandboxes: number;
   runTimeoutMs: number;
   model?: string;
-  /** For the check on thread replies that don't mention the bot. Unset turns those replies off. */
+  /** Unset turns off replies to thread messages that don't mention the bot. */
   anthropicApiKey?: string;
   prompt: string;
-  /** The MCP servers every run gets, as Claude Code's --mcp-config, with no credentials. */
   mcpConfig: string;
 }
 
@@ -58,6 +55,7 @@ export function loadConfig(): Config {
     proxyToken: requireEnv("INFISICAL_AGENT_VAULT_PROXY_TOKEN"),
     caFingerprint: requireEnv("INFISICAL_AGENT_VAULT_CA_FINGERPRINT"),
     sandboxProvider: sandboxProvider(),
+    deploymentName: process.env.DEPLOYMENT_NAME?.trim() || "team-assistant",
     modalAppName: process.env.MODAL_APP_NAME?.trim() || "team-assistant",
     maxSandboxes: numberEnv("MAX_SANDBOXES", 3),
     runTimeoutMs: numberEnv("RUN_TIMEOUT_MINUTES", 10) * 60_000,

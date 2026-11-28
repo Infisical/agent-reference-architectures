@@ -34,7 +34,7 @@ Runs the on-call agent and an Agent Vault proxy as two systemd services on one L
 
    The repo stays owned by root, so the agent can't change the bridge or its own prompt.
 
-3. Copy `.env.example` to `.env`, and fill in the values that aren't secrets: `AGENT_CHANNEL_ID`, `AGENT_ALLOWLIST`, `SENTRY_ORG`, `SENTRY_PROJECT`, and `GITHUB_REPO`.
+3. Copy `.env.example` to `.env`, and fill in the values that aren't secrets: `AGENT_CHANNEL_ID`, `AGENT_ALLOWLIST`, `SENTRY_ORG`, `SENTRY_PROJECT`, `GITHUB_REPO`, and the `GIT_AUTHOR_*` and `GIT_COMMITTER_*` name and email.
 
 4. Create the two files that hold secrets, readable only by root:
 

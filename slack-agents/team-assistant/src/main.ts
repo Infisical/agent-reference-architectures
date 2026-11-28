@@ -1,4 +1,3 @@
-// Starts the team assistant: npm start
 import { loadConfig, loadEnv } from "./config.ts";
 import { createSandboxes } from "./sandbox.ts";
 import { createRunner } from "./run.ts";

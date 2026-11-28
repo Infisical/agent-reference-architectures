@@ -5,7 +5,6 @@ import { chunkText } from "./chunk-text.ts";
 import { requireEnv, type Agent } from "./config.ts";
 import { runClaude } from "./run-claude.ts";
 
-/** The one Slack channel the agent answers in. Unset means it answers nowhere. */
 const AGENT_CHANNEL_ID = process.env.AGENT_CHANNEL_ID?.trim() || "";
 
 type SlackClient = InstanceType<typeof App>["client"];
@@ -17,22 +16,15 @@ interface SlackUser {
 
 const LATEST_MESSAGE_MARKER = "Respond to this latest message:";
 
-// Slack's formatting differs from Markdown, and the reply is a Slack message.
 const SLACK_FORMATTING = `You're answering in a Slack thread. Be concise, use no emojis, and format with Slack's syntax: *bold*, _italic_, bullets with •, and \`\`\` code blocks. Write links as <url|label>, never [label](url).`;
 
-/**
- * Start the agent as a Socket Mode Slack bot. It answers @mentions in AGENT_CHANNEL_ID only, from
- * people on AGENT_ALLOWLIST, and reads the whole thread as context.
- */
 export async function startSlackBot(agent: Agent): Promise<void> {
   const botToken = requireEnv("SLACK_BOT_TOKEN");
   const appToken = requireEnv("SLACK_APP_TOKEN");
 
-  // Behind Agent Vault, SLACK_BOT_TOKEN is a placeholder that the proxy swaps for the real token in
-  // the Authorization header. The proxy can't rewrite a request body, so the token must never go in
-  // one. @slack/web-api puts a per-call `token` argument in the form body, so every call here uses
-  // the client-level token instead. For the same reason Bolt gets the bot's ids up front and token
-  // verification off: otherwise it calls auth.test with the token in the body and gets invalid_auth.
+  // The proxy swaps the placeholder token only in headers, never in a request body. Bolt's own
+  // auth.test sends the token in the body, so the bot's IDs come from a header-authenticated call
+  // and Bolt's token verification stays off.
   const identity = await new WebClient(botToken).auth.test();
   const botUserId = identity.user_id;
   const app = new App({
@@ -49,8 +41,6 @@ export async function startSlackBot(agent: Agent): Promise<void> {
 
   const stripBotMention = (text: string) => (botUserId ? text.replaceAll(`<@${botUserId}>`, "") : text).trim();
 
-  // One users.info call per person per process gives both the email (for the allowlist) and the
-  // display name (so the transcript reads "Alex: ..." instead of "<@U123>: ...").
   const users = new Map<string, SlackUser>();
   async function lookUpUser(client: SlackClient, userId: string): Promise<SlackUser> {
     const cached = users.get(userId);
@@ -64,7 +54,7 @@ export async function startSlackBot(agent: Agent): Promise<void> {
       users.set(userId, found);
       return found;
     } catch (err) {
-      // missing_scope means the app needs users:read and users:read.email. The allowlist then fails closed.
+      // missing_scope means the app needs users:read and users:read.email.
       const code = (err as { data?: { error?: string } }).data?.error;
       console.error(`users.info failed${code ? ` (${code})` : ""}:`, err);
       return {};
@@ -76,7 +66,7 @@ export async function startSlackBot(agent: Agent): Promise<void> {
     try {
       ({ messages } = await client.conversations.replies({ channel, ts: threadTs, limit: 200 }));
     } catch (err) {
-      // missing_scope means the app needs groups:history (private channel) or channels:history (public).
+      // missing_scope means the app needs groups:history or channels:history.
       const code = (err as { data?: { error?: string } }).data?.error;
       console.error(`Failed to read the thread${code ? ` (${code})` : ""}:`, err);
       return latest;
@@ -97,8 +87,7 @@ export async function startSlackBot(agent: Agent): Promise<void> {
       }
     }
 
-    // replies returns the oldest messages first, so on a long thread the latest one can be cut off.
-    // Always append it.
+    // replies returns the oldest messages first, so a long thread can be missing the latest one.
     return `Conversation in this Slack thread so far:\n\n${lines.join("\n")}\n\n${LATEST_MESSAGE_MARKER} ${latest}`;
   }
 
@@ -130,8 +119,7 @@ export async function startSlackBot(agent: Agent): Promise<void> {
     const thinkingTs = thinking.ts;
     if (!thinkingTs) return;
 
-    // Progress updates run one at a time, and the final answer waits for the last one, so a slow
-    // status update can't land after the answer and replace it.
+    // The answer waits for the last progress update, so a slow update can't overwrite it.
     let lastProgress = "";
     let progressUpdates = Promise.resolve();
     let finished = false;

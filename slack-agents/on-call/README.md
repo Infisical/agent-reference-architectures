@@ -102,6 +102,7 @@ To limit where a leaked client secret works, restrict it to the agent's machine 
 | `AGENT_ALLOWLIST` | The emails on the Slack profiles of the people who can use the agent |
 | `GITHUB_REPO` | The repo, as `owner/repo` |
 | `SENTRY_ORG`, `SENTRY_PROJECT` | The org and project slugs in Sentry's URLs |
+| `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME`, `GIT_COMMITTER_EMAIL` | The name and email the agent's commits show. GitHub links a commit to an account only if its email is verified on that account, so use one of the token owner's emails, such as the `noreply` address from GitHub's email settings |
 
 You also need the Agent Vault project's ID and the proxy's fingerprint, which aren't secret either. The deployment's secret file holds them, next to the secrets.
 

@@ -10,10 +10,6 @@ const TIMEOUT_MS = 20 * 60_000;
 // Runs share one working directory, so they run one at a time.
 let queue: Promise<unknown> = Promise.resolve();
 
-/**
- * Runs `claude -p` on the prompt in the agent's working directory and returns its answer. Claude Code
- * inherits the proxy settings from `infisical agent-vault run`, so its requests carry brokered credentials.
- */
 export function runClaude(agent: Agent, prompt: string, onProgress?: (label: string) => void): Promise<string> {
   const run = queue.then(() => runOnce(agent, prompt, onProgress));
   queue = run.catch(() => {});
@@ -28,7 +24,6 @@ async function runOnce(agent: Agent, prompt: string, onProgress?: (label: string
     "--model", MODEL,
     "--permission-mode", "bypassPermissions",
     ...(agent.mcpConfigFile ? ["--mcp-config", agent.mcpConfigFile] : []),
-    // Only the agent's own MCP servers, never ones configured on the machine.
     "--strict-mcp-config",
     "--append-system-prompt", readFileSync(agent.promptFile, "utf8"),
   ];
@@ -43,22 +38,36 @@ async function runOnce(agent: Agent, prompt: string, onProgress?: (label: string
     },
     stdio: ["pipe", "pipe", "inherit"],
   });
+  // An unhandled error event, such as a failure to start, would crash the bridge.
+  const exited = new Promise<number | null>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("close", resolve);
+  });
+  exited.catch(() => {});
+  // An early exit fails the write, and the exit code reports it instead.
+  child.stdin.on("error", () => {});
   // On stdin, because a long Slack thread can outgrow the limit on one argument.
   child.stdin.end(prompt);
 
   const timer = setTimeout(() => child.kill("SIGTERM"), TIMEOUT_MS);
   let answer: { text: string; isError: boolean } | undefined;
-  for await (const line of createInterface({ input: child.stdout })) {
-    const event = parseStreamLine(line);
-    if (event.kind === "tool") {
-      const label = progressLabel(event.tool);
-      if (label) onProgress?.(label);
-    } else if (event.kind === "result") {
-      answer = event;
+  try {
+    for await (const line of createInterface({ input: child.stdout })) {
+      const event = parseStreamLine(line);
+      if (event.kind === "tool") {
+        const label = progressLabel(event.tool);
+        if (label) onProgress?.(label);
+      } else if (event.kind === "result") {
+        answer = event;
+      }
     }
+  } finally {
+    clearTimeout(timer);
   }
-  clearTimeout(timer);
+  const code = await exited;
 
-  if (!answer || answer.isError) throw new Error(`Claude Code finished without an answer${answer?.text ? `: ${answer.text}` : ""}`);
+  if (!answer || answer.isError) {
+    throw new Error(`Claude Code finished without an answer (exit ${code})${answer?.text ? `: ${answer.text}` : ""}`);
+  }
   return answer.text;
 }

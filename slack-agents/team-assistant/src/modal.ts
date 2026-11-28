@@ -3,37 +3,28 @@ import type { Config } from "./config.ts";
 import {
   IMAGE_COMMANDS,
   SANDBOX_MARGIN_MS,
-  SANDBOX_TAGS,
+  sandboxTags,
   SANDBOX_USER,
   splitLines,
   type ExecResult,
   type Sandboxes,
 } from "./sandbox.ts";
 
-/** The proxy sidecar's name, which is also its hostname inside the sandbox. */
+// The sidecar's name is also its hostname inside the sandbox.
 const PROXY_SIDECAR = "agent-proxy";
 const PROXY_PORT = 17323;
 const PROXY_ADDRESS = `${PROXY_SIDECAR}:${PROXY_PORT}`;
 
-/** A sandbox shuts itself down after this long with no command running. */
 const IDLE_TIMEOUT_MS = 5 * 60_000;
 
-// The proxy reads its token from INFISICAL_AGENT_VAULT_PROXY_TOKEN, never an argument, and loads its
-// settings and certificate authority from Infisical, so every sidecar runs a copy of the same proxy.
+// The proxy token comes from the environment, never an argument, so it stays out of the process list.
 const PROXY_COMMAND = `exec infisical agent-vault proxy --data-dir /tmp/proxy --port ${PROXY_PORT} --telemetry=false >/tmp/proxy.log 2>&1`;
 
-// Polls until the proxy serves its certificate authority, for up to 30 seconds, or prints the end of its log.
 const WAIT_FOR_PROXY = `for i in $(seq 60); do curl -fs http://127.0.0.1:${PROXY_PORT}/_agent-vault/ca >/dev/null && exit 0; sleep 0.5; done; tail -n 20 /tmp/proxy.log; exit 1`;
 
 type ModalSandbox = { id: string; sandbox: Sandbox };
 
-/**
- * Modal sandboxes, as in the Agent Vault guide for Modal. The agent's container has no public egress,
- * so its only way out is the proxy running as a sidecar in the same sandbox, which only that sandbox
- * can reach. The proxy token goes to the sidecar alone, as a Modal Secret.
- */
 export function createModalSandboxes(config: Config): Sandboxes<ModalSandbox> {
-  // Reads MODAL_TOKEN_ID and MODAL_TOKEN_SECRET, or else the active profile in ~/.modal.toml.
   const modal = new ModalClient();
   let app: Promise<App> | undefined;
   let image: Promise<Image> | undefined;
@@ -63,7 +54,7 @@ export function createModalSandboxes(config: Config): Sandboxes<ModalSandbox> {
         idleTimeoutMs: IDLE_TIMEOUT_MS,
         cpu: 1,
         memoryMiB: 2048,
-        tags: SANDBOX_TAGS,
+        tags: sandboxTags(config),
         // Empty blocks all public egress but leaves the sandbox's own sidecars reachable.
         outboundCidrAllowlist: [],
       });
@@ -117,7 +108,7 @@ export function createModalSandboxes(config: Config): Sandboxes<ModalSandbox> {
     async sweep() {
       const { appId } = await getApp();
       let count = 0;
-      for await (const sandbox of modal.sandboxes.list({ appId, tags: SANDBOX_TAGS })) {
+      for await (const sandbox of modal.sandboxes.list({ appId, tags: sandboxTags(config) })) {
         await sandbox.terminate().catch((err) => {
           if (!(err instanceof NotFoundError)) throw err;
         });

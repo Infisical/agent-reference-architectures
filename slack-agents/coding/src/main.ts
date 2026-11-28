@@ -1,4 +1,3 @@
-// Starts the agent as a Slack bot: npm start
 import { loadAgent } from "./config.ts";
 
 const agent = loadAgent();

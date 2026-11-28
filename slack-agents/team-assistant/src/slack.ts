@@ -10,9 +10,11 @@ type SlackClient = InstanceType<typeof App>["client"];
 interface SlackUser {
   name?: string;
   email?: string;
+  external?: boolean;
 }
 
-/** How a run was started, which decides what it posts. */
+const USER_CACHE_MS = 10 * 60_000;
+
 type Trigger =
   /** A mention or a DM: shows progress, and replies even to say it can't help. */
   | "direct"
@@ -25,36 +27,46 @@ const STOP_FOLLOWING = "[stop_following]";
 const notCoveredMessage = (name: string) =>
   `Sorry, I can't act for you yet. Ask an Agent Vault admin to add you to ${name}'s delegation, and to grant you its access bundle.`;
 
-/**
- * The Slack side of the assistant. It answers DMs and mentions in any channel, and replies in a
- * thread it's already in when a small model thinks the reply is meant for it. Every run acts as the
- * person who asked, through an Agent Vault session on their behalf.
- */
 export async function startSlackBot(config: Config, runner: Runner): Promise<App> {
   const app = new App({
     token: requireEnv("SLACK_BOT_TOKEN"),
     appToken: requireEnv("SLACK_APP_TOKEN"),
     socketMode: true,
   });
-  const { user_id: botUserId } = await app.client.auth.test();
-  if (!botUserId) throw new Error("auth.test returned no bot user ID");
+  const { user_id: botUserId, team_id: teamId, enterprise_id: enterpriseId } = await app.client.auth.test();
+  if (!botUserId || !teamId) throw new Error("auth.test returned no bot user ID or workspace ID");
   const botMention = `<@${botUserId}>`;
 
-  /** Threads the agent was asked to stay out of. Kept in memory, so a restart forgets them. */
   const muted = new Set<string>();
   const threadKey = (channel: string, threadTs: string) => `${channel}:${threadTs}`;
 
-  const users = new Map<string, SlackUser>();
+  // One message per thread at a time, so each run reads the answers to the messages before it.
+  const threadQueues = new Map<string, Promise<void>>();
+  function inThreadOrder(key: string, work: () => Promise<void>): Promise<void> {
+    const next = (threadQueues.get(key) ?? Promise.resolve()).then(work);
+    const tail = next.catch(() => {});
+    threadQueues.set(key, tail);
+    void tail.then(() => {
+      if (threadQueues.get(key) === tail) threadQueues.delete(key);
+    });
+    return next;
+  }
+
+  const users = new Map<string, { user: SlackUser; expires: number }>();
   async function lookUpUser(client: SlackClient, userId: string): Promise<SlackUser> {
     const cached = users.get(userId);
-    if (cached) return cached;
+    if (cached && cached.expires > Date.now()) return cached.user;
     try {
       const { user } = await client.users.info({ user: userId });
-      const found = {
+      // In a Slack Connect channel, another workspace's admin can put any email on their users' profiles,
+      // so only people in this workspace, or in its Enterprise Grid organization, get acted for.
+      const external = user?.team_id !== teamId && !(enterpriseId && user?.enterprise_user?.enterprise_id === enterpriseId);
+      const found: SlackUser = {
         name: user?.profile?.display_name || user?.profile?.real_name || user?.real_name || user?.name,
-        email: user?.profile?.email,
+        email: external ? undefined : user?.profile?.email,
+        external,
       };
-      users.set(userId, found);
+      users.set(userId, { user: found, expires: Date.now() + USER_CACHE_MS });
       return found;
     } catch (err) {
       // missing_scope means the app needs users:read and users:read.email.
@@ -74,13 +86,19 @@ export async function startSlackBot(config: Config, runner: Runner): Promise<App
     }
   }
 
-  /**
-   * The thread so far, as the agent reads it. Only the requester's messages are requests. Everyone
-   * else's are marked as context, since the agent acts with the requester's access.
-   */
-  async function transcript(client: SlackClient, channel: string, threadTs: string, requesterId: string) {
+  // Everyone but the requester is marked as context, since the agent acts with the requester's access.
+  async function transcript(
+    client: SlackClient,
+    channel: string,
+    threadTs: string,
+    requesterId: string,
+    latest: { ts: string; text: string },
+  ) {
     const lines: string[] = [];
-    for (const m of await threadMessages(client, channel, threadTs)) {
+    const messages = await threadMessages(client, channel, threadTs);
+    // A thread longer than one page of history doesn't include the newest message, so add it.
+    if (!messages.some((m) => m.ts === latest.ts)) messages.push({ ts: latest.ts, user: requesterId, text: latest.text });
+    for (const m of messages) {
       if (!m.text) continue;
       const text = m.text.replaceAll(botMention, "").trim();
       if (m.user === botUserId) lines.push(`${config.name} (you): ${text}`);
@@ -111,12 +129,18 @@ export async function startSlackBot(config: Config, runner: Runner): Promise<App
 
     const requester = await lookUpUser(client, user);
     if (!requester.email) {
-      if (trigger === "direct") await reply("Sorry, I couldn't read the email on your Slack profile, so I can't act for you.");
+      if (trigger === "direct") {
+        await reply(
+          requester.external
+            ? "Sorry, I can only act for people in this workspace."
+            : "Sorry, I couldn't read the email on your Slack profile, so I can't act for you.",
+        );
+      }
       return;
     }
 
     const isDm = channelType === "im";
-    const lines = threadTs !== ts ? await transcript(client, channel, threadTs, user) : [];
+    const lines = threadTs !== ts ? await transcript(client, channel, threadTs, user, { ts, text }) : [];
     const message = text.replaceAll(botMention, "").trim();
     if (trigger === "background" && !(await isMeantForAgent(config.anthropicApiKey, lines.join("\n")))) return;
 
@@ -132,15 +156,25 @@ export async function startSlackBot(config: Config, runner: Runner): Promise<App
       .filter(Boolean)
       .join("\n\n");
 
-    // A direct run shows a placeholder it edits with progress, then replaces with the answer.
     const placeholder = trigger === "direct" ? (await reply("Thinking…")).ts : undefined;
-    let progress = Promise.resolve();
+    // Only the newest status is posted, so a backlog of updates can't hold up the answer.
+    let latest: string | undefined;
+    let progress: Promise<void> = Promise.resolve();
+    let posting = false;
     let finished = false;
     const show = (status: string) => {
       if (!placeholder || finished) return;
-      progress = progress
-        .then(() => client.chat.update({ channel, ts: placeholder, text: status }))
-        .then(() => {}, () => {});
+      latest = status;
+      if (posting) return;
+      posting = true;
+      progress = (async () => {
+        while (latest !== undefined && !finished) {
+          const next = latest;
+          latest = undefined;
+          await client.chat.update({ channel, ts: placeholder, text: next }).catch(() => {});
+        }
+        posting = false;
+      })();
     };
 
     let answer: string;
@@ -186,31 +220,33 @@ export async function startSlackBot(config: Config, runner: Runner): Promise<App
     for (const chunk of rest) await reply(chunk);
   }
 
-  // A mention anywhere the bot has been invited.
   app.event("app_mention", async ({ event, client }) => {
-    if (!event.user) return;
-    void handle(client, {
-      channel: event.channel,
-      channelType: "channel",
-      ts: event.ts,
-      threadTs: event.thread_ts ?? event.ts,
-      user: event.user,
-      text: event.text,
-      trigger: "direct",
-    }).catch((err) => console.error("Failed to handle a mention:", err));
+    const user = event.user;
+    if (!user) return;
+    const threadTs = event.thread_ts ?? event.ts;
+    void inThreadOrder(threadKey(event.channel, threadTs), () =>
+      handle(client, {
+        channel: event.channel,
+        channelType: "channel",
+        ts: event.ts,
+        threadTs,
+        user,
+        text: event.text,
+        trigger: "direct",
+      }),
+    ).catch((err) => console.error("Failed to handle a mention:", err));
   });
 
-  // DMs, and thread replies in channels that don't mention the bot.
   app.message(async ({ message, client }) => {
-    // Edits, joins and other subtypes aren't new messages from a person.
     if (message.subtype !== undefined || !("user" in message) || !message.user || message.user === botUserId) return;
     const text = message.text ?? "";
     const base = { channel: message.channel, ts: message.ts, user: message.user, text };
 
     if (message.channel_type === "im") {
-      void handle(client, { ...base, channelType: "im", threadTs: message.thread_ts ?? message.ts, trigger: "direct" }).catch(
-        (err) => console.error("Failed to handle a DM:", err),
-      );
+      const dmThreadTs = message.thread_ts ?? message.ts;
+      void inThreadOrder(threadKey(message.channel, dmThreadTs), () =>
+        handle(client, { ...base, channelType: "im", threadTs: dmThreadTs, trigger: "direct" }),
+      ).catch((err) => console.error("Failed to handle a DM:", err));
       return;
     }
 
@@ -219,12 +255,11 @@ export async function startSlackBot(config: Config, runner: Runner): Promise<App
     const threadTs = message.thread_ts;
     if (!config.anthropicApiKey || !threadTs || text.includes(botMention) || /<@|<!(here|channel|everyone|subteam)/.test(text)) return;
     if (muted.has(threadKey(message.channel, threadTs))) return;
-    // Only threads the bot has already posted in.
     const thread = await threadMessages(client, message.channel, threadTs);
     if (!thread.some((m) => m.user === botUserId)) return;
-    void handle(client, { ...base, channelType: message.channel_type, threadTs, trigger: "background" }).catch((err) =>
-      console.error("Failed to handle a thread reply:", err),
-    );
+    void inThreadOrder(threadKey(message.channel, threadTs), () =>
+      handle(client, { ...base, channelType: message.channel_type, threadTs, trigger: "background" }),
+    ).catch((err) => console.error("Failed to handle a thread reply:", err));
   });
 
   await app.start();

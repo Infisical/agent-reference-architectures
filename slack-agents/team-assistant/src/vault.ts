@@ -1,7 +1,6 @@
 import { InfisicalSDK, InfisicalSDKRequestError } from "@infisical/sdk";
 import type { Config } from "./config.ts";
 
-/** Infisical refused to start a session for this person, so they can't use the assistant. */
 export class NotCoveredError extends Error {}
 
 export interface Session {
@@ -9,14 +8,8 @@ export interface Session {
   token: string;
 }
 
-/** Infisical's limit on a session label. */
 const LABEL_MAX_CHARS = 128;
 
-/**
- * Agent Vault sessions for the assistant's machine identity, each on behalf of the person who asked.
- * The identity needs a delegation that covers them and a grant to the access bundle, and the session
- * reaches only what both the identity and the person can reach.
- */
 export function createVault(config: Config) {
   // Logs in for each call, so a long-running orchestrator never holds an expired access token.
   async function client(): Promise<InfisicalSDK> {
@@ -26,7 +19,6 @@ export function createVault(config: Config) {
   }
 
   return {
-    /** Starts a session on the access bundle, on behalf of `email`, that lasts `ttlMinutes`. */
     async startSession({ email, ttlMinutes, label }: { email: string; ttlMinutes: number; label: string }): Promise<Session> {
       const infisical = await client();
       try {

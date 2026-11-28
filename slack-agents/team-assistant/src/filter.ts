@@ -1,18 +1,12 @@
-// Decides whether a thread reply that doesn't mention the bot is meant for it.
-
 const MODEL = "claude-haiku-5-5";
 const TIMEOUT_MS = 5_000;
-/** A reply scoring below this is skipped. Anything else, including no answer, runs the agent. */
 const SKIP_BELOW = 0.2;
 
 const QUESTION = `You decide whether the latest message in a Slack thread is meant for the AI assistant in that thread.
 Answer with only a number from 0 to 100: how likely it is that the author expects the assistant to respond.
 Follow-ups, corrections and questions to the assistant score high. Messages people send each other score low.`;
 
-/**
- * True unless a small model is confident the reply isn't for the agent. Fails open: with no API key,
- * a timeout or any error, the reply runs the agent, which can still post nothing with [no_reply].
- */
+// Fails open, because the agent can still decline to answer with [no_reply].
 export async function isMeantForAgent(apiKey: string | undefined, transcript: string): Promise<boolean> {
   if (!apiKey) return true;
   try {

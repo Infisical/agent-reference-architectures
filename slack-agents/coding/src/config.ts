@@ -3,17 +3,14 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-/** The agent this folder defines: its prompt.md and .env, and mcp.json if it uses MCP servers. */
 export interface Agent {
   name: string;
   promptFile: string;
-  /** The agent's mcp.json, or undefined when it has none. */
   mcpConfigFile?: string;
-  /** Where Claude Code runs. The agent keeps its clone of the repo here between messages. */
   workdir: string;
 }
 
-/** Loads the folder's .env into the environment. Import slack.ts and run-claude.ts after this, since they read it. */
+// slack.ts and run-claude.ts read the environment when they load, so import them after this runs.
 export function loadAgent(): Agent {
   const dir = fileURLToPath(new URL("../", import.meta.url));
   if (existsSync(join(dir, ".env"))) process.loadEnvFile(join(dir, ".env"));

@@ -11,7 +11,7 @@ Runs the on-call agent and an Agent Vault proxy with Docker Compose. The agent r
 
 ## Run it
 
-1. Copy `../.env.example` to `../.env`, and fill in the values that aren't secrets: `AGENT_CHANNEL_ID`, `AGENT_ALLOWLIST`, `SENTRY_ORG`, `SENTRY_PROJECT`, and `GITHUB_REPO`.
+1. Copy `../.env.example` to `../.env`, and fill in the values that aren't secrets: `AGENT_CHANNEL_ID`, `AGENT_ALLOWLIST`, `SENTRY_ORG`, `SENTRY_PROJECT`, `GITHUB_REPO`, and the `GIT_AUTHOR_*` and `GIT_COMMITTER_*` name and email.
 2. Copy `agent-vault.env.example` to `agent-vault.env`, and fill in the proxy token, the machine identity's client ID and client secret, the Agent Vault project ID, and the proxy's fingerprint. If you use Infisical outside US Cloud, add `INFISICAL_DOMAIN`, such as `https://eu.infisical.com`.
 3. From this folder, start both containers:
 

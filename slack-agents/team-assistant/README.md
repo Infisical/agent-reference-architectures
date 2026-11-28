@@ -192,6 +192,8 @@ In a thread, people can ask the bot to stop following it. It then ignores untagg
 ## Limits
 
 - The email on each person's Slack profile must match their Infisical account. Someone whose emails differ gets a reply that the bot can't act for them
+- The bot acts only for people in its own workspace, or in its Enterprise Grid organization. In a Slack Connect channel, another workspace's admin can set any email on their users' profiles, so the bot refuses people from other workspaces
+- On startup, the orchestrator deletes leftover sandboxes tagged with its `DEPLOYMENT_NAME`. If two deployments share a Daytona organization or Modal app, give each its own name in `.env`
 - The orchestrator holds real secrets, and isn't behind Agent Vault. Keep it on a host of its own
 - Each run's proxy holds the proxy token, in a container or sandbox separate from the agent's
 - On Modal, sidecars are a beta feature (`experimentalSidecars` in Modal's JavaScript SDK), so the API may change, and Modal allows DNS lookups from a sandbox even with no public egress

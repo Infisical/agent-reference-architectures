@@ -23,20 +23,22 @@ if (args[0] === "--preflight") {
       console.log(`Sandbox ${s.id}`);
     });
     console.log("The proxy is serving.");
-    // Each check prints PASS or FAIL. The agent must not be root, must reach the proxy, and must reach nothing else.
     const probe = [
       `[ "$(id -un)" = ${SANDBOX_USER} ] && echo "PASS runs as ${SANDBOX_USER}" || echo "FAIL runs as $(id -un)"`,
       `curl -sf -m 10 "http://$INFISICAL_AGENT_VAULT_PROXY_ADDRESS/_agent-vault/ca" >/dev/null && echo "PASS reaches the proxy" || echo "FAIL can't reach the proxy"`,
       `curl -s -m 10 -o /dev/null https://example.com && echo "FAIL reaches the internet directly" || echo "PASS can't reach the internet directly"`,
     ].join("\n");
     const exec = await sandboxes.exec(sandbox!, probe, "");
-    let failed = false;
+    let passed = 0;
     for await (const line of exec.lines) {
       console.log(line);
-      if (line.startsWith("FAIL")) failed = true;
+      if (line.startsWith("PASS")) passed++;
     }
-    await exec.done;
-    process.exitCode = failed ? 1 : 0;
+    const { code, stderr } = await exec.done;
+    // A probe that exits early prints no FAIL line either, so only a clean exit with every check passing counts.
+    const ok = code === 0 && passed === probe.split("\n").length;
+    if (!ok) console.log(`FAIL the probe exited with code ${code} after ${passed} passing check(s)${stderr ? `:\n${stderr.trim()}` : ""}`);
+    process.exitCode = ok ? 0 : 1;
   } finally {
     if (sandbox) {
       await sandboxes.stopProxy(sandbox).catch(() => {});

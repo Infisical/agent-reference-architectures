@@ -3,31 +3,26 @@ import { parseStreamLine, progressLabel } from "./claude-stream.ts";
 import type { Config } from "./config.ts";
 import type { Vault } from "./vault.ts";
 
-/** A session outlives its run's timeout by this much, so cleanup never races its expiry. */
+// A session outlives its run's timeout by this much, so cleanup never races its expiry.
 const SESSION_MARGIN_MINUTES = 5;
 
-/** One run's session and sandbox, kept so cleanup and a shutdown can find them. */
+const SHUTDOWN_WAIT_MS = 60_000;
+
 type Run = { sessionId?: string; sandbox?: { id: string } };
 
 export interface RunRequest {
-  /** The Slack user's email: the session acts on behalf of the Infisical user with this email. */
+  /** The session acts on behalf of the Infisical user with this email. */
   email: string;
-  /** What the session log shows for this run. */
   label: string;
   prompt: string;
-  /** Called if every sandbox is busy and the run has to wait. */
   onQueued?: () => void;
   onProgress?: (label: string) => void;
 }
 
 export const shellQuote = (text: string) => `'${text.replaceAll("'", `'\\''`)}'`;
 
-/**
- * The script the agent's container runs. It holds no secrets: the session token is the first line of
- * stdin and the MCP config the second, and the rest of stdin is the prompt, which Claude Code reads.
- * `agent-vault run` points Claude Code at the proxy sidecar and checks the proxy's certificate
- * authority against the pinned fingerprint before Claude Code starts.
- */
+// The script holds no secrets. stdin carries the session token on its first line, the MCP config on
+// its second, and the prompt after that.
 export function bootstrapScript(config: Pick<Config, "prompt" | "caFingerprint" | "model">): string {
   const prompt = Buffer.from(config.prompt).toString("base64");
   const claude = [
@@ -55,7 +50,6 @@ export function bootstrapScript(config: Pick<Config, "prompt" | "caFingerprint" 
   ].join("\n");
 }
 
-/** Hands out at most `max` slots. Callers past that wait in arrival order. */
 function createLimiter(max: number) {
   let active = 0;
   const waiting: (() => void)[] = [];
@@ -78,14 +72,15 @@ function createLimiter(max: number) {
   };
 }
 
-/**
- * Runs the agent once: a session on behalf of the person asking, a fresh sandbox, Claude Code in it,
- * then the session revoked and the sandbox terminated, whatever happened.
- */
 export function createRunner({ config, vault, sandboxes }: { config: Config; vault: Vault; sandboxes: Sandboxes }) {
   const limiter = createLimiter(config.maxSandboxes);
   const script = bootstrapScript(config);
   const active = new Set<Run>();
+  const pending = new Set<Promise<string>>();
+  let stopping = false;
+  const checkStopping = () => {
+    if (stopping) throw new Error("The assistant is shutting down");
+  };
 
   // The proxy stops first, so it uploads the rest of the session logs. Then the session is revoked
   // before the sandbox goes, so it ends even if terminating fails.
@@ -101,54 +96,73 @@ export function createRunner({ config, vault, sandboxes }: { config: Config; vau
     }
   }
 
-  return {
-    async run({ email, label, prompt, onQueued, onProgress }: RunRequest): Promise<string> {
-      const release = await limiter.acquire(onQueued);
-      const run: Run = {};
-      active.add(run);
-      try {
-        // The session comes first: someone the delegation doesn't cover is refused before a sandbox starts.
-        const session = await vault.startSession({
-          email,
-          ttlMinutes: config.runTimeoutMs / 60_000 + SESSION_MARGIN_MINUTES,
-          label,
-        });
-        run.sessionId = session.id;
-        await sandboxes.create((sandbox) => (run.sandbox = sandbox));
+  async function runOnce({ email, label, prompt, onQueued, onProgress }: RunRequest): Promise<string> {
+    checkStopping();
+    const release = await limiter.acquire(onQueued);
+    const run: Run = {};
+    active.add(run);
+    try {
+      checkStopping();
+      // The session comes first: someone the delegation doesn't cover is refused before a sandbox starts.
+      const session = await vault.startSession({
+        email,
+        ttlMinutes: config.runTimeoutMs / 60_000 + SESSION_MARGIN_MINUTES,
+        label,
+      });
+      run.sessionId = session.id;
+      checkStopping();
+      await sandboxes.create((sandbox) => (run.sandbox = sandbox));
+      checkStopping();
+      // The agent's shell has the session token, so anything it prints could carry it to Slack or the logs.
+      const mask = (text: string) => text.replaceAll(session.token, "[session token]");
 
-        const exec = await sandboxes.exec(run.sandbox!, script, `${session.token}\n${config.mcpConfig}\n${prompt}`);
-        const timer = setTimeout(() => run.sandbox && void sandboxes.terminate(run.sandbox), config.runTimeoutMs);
-        let answer: { text: string; isError: boolean } | undefined;
-        try {
-          for await (const line of exec.lines) {
-            const event = parseStreamLine(line);
-            if (event.kind === "tool") {
-              const progress = progressLabel(event.tool);
-              if (progress) onProgress?.(progress);
-            } else if (event.kind === "result") {
-              answer = event;
-            }
+      const exec = await sandboxes.exec(run.sandbox!, script, `${session.token}\n${config.mcpConfig}\n${prompt}`);
+      const timer = setTimeout(() => {
+        if (!run.sandbox) return;
+        sandboxes.terminate(run.sandbox).catch((err) => console.error(`Failed to terminate ${run.sandbox?.id} after the timeout:`, err));
+      }, config.runTimeoutMs);
+      let answer: { text: string; isError: boolean } | undefined;
+      try {
+        for await (const line of exec.lines) {
+          const event = parseStreamLine(mask(line));
+          if (event.kind === "tool") {
+            const progress = progressLabel(event.tool);
+            if (progress) onProgress?.(progress);
+          } else if (event.kind === "result") {
+            answer = event;
           }
-          const { code, stderr } = await exec.done;
-          if (!answer || answer.isError) {
-            throw new Error(
-              `Claude Code finished without an answer (exit ${code})${answer?.text ? `: ${answer.text}` : ""}${stderr ? `\n${stderr.trim()}` : ""}`,
-            );
-          }
-        } finally {
-          clearTimeout(timer);
         }
-        return answer.text;
+        const { code, stderr } = await exec.done;
+        if (!answer || answer.isError) {
+          throw new Error(
+            `Claude Code finished without an answer (exit ${code})${answer?.text ? `: ${answer.text}` : ""}${stderr ? `\n${mask(stderr).trim()}` : ""}`,
+          );
+        }
       } finally {
-        await cleanUp(run);
-        active.delete(run);
-        release();
+        clearTimeout(timer);
       }
+      return answer.text;
+    } finally {
+      await cleanUp(run);
+      active.delete(run);
+      release();
+    }
+  }
+
+  return {
+    run(request: RunRequest): Promise<string> {
+      const task = runOnce(request);
+      pending.add(task);
+      const forget = () => pending.delete(task);
+      task.then(forget, forget);
+      return task;
     },
 
-    /** Revokes the sessions and terminates the sandboxes of runs still going, for a clean stop. */
+    // Waits for runs still creating a session or a sandbox, so nothing they create afterward is left behind.
     async stopAll(): Promise<void> {
+      stopping = true;
       await Promise.all([...active].map(cleanUp));
+      await Promise.race([Promise.allSettled([...pending]), new Promise((resolve) => setTimeout(resolve, SHUTDOWN_WAIT_MS))]);
     },
   };
 }

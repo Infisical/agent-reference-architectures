@@ -6,7 +6,7 @@ import {
   IMAGE_COMMANDS,
   INFISICAL_CLI_VERSION,
   SANDBOX_MARGIN_MS,
-  SANDBOX_TAGS,
+  sandboxTags,
   SANDBOX_USER,
   type ExecResult,
   type Sandboxes,
@@ -17,8 +17,7 @@ const PROXY_PORT = 17323;
 /** Named after the versions it installs, so a version change builds a new snapshot. */
 const SNAPSHOT = `team-assistant-claude-${CLAUDE_CODE_VERSION}-cli-${INFISICAL_CLI_VERSION}`.replaceAll(".", "-");
 
-// Prints the proxy's address on the network it shares with the agent's sandbox. The address appears
-// shortly after the agent's sandbox is linked.
+// The address on the linked network appears shortly after linking, so this retries.
 const GET_LINK_ADDRESS =
   "for i in $(seq 60); do ip -4 -o addr show eth1 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | grep . && exit 0; sleep 0.5; done; exit 1";
 
@@ -33,14 +32,7 @@ const WITHOUT_DAYTONA_PROXY = "env -u HTTP_PROXY -u HTTPS_PROXY -u http_proxy -u
 
 type DaytonaSandbox = { id: string; proxy: Sandbox; agent?: Sandbox; proxyAddress?: string };
 
-/**
- * Daytona sandboxes, as in the Agent Vault guide for Daytona. Each run uses two: one runs the proxy,
- * and a linked sandbox runs the agent and can reach only the proxy's address on their private
- * network. The proxy token goes to the proxy's sandbox alone. Needs a Daytona organization on Tier 3
- * or 4, where a sandbox's network can be limited.
- */
 export function createDaytonaSandboxes(config: Config): Sandboxes<DaytonaSandbox> {
-  // Reads DAYTONA_API_KEY.
   const daytona = new Daytona();
   let snapshot: Promise<void> | undefined;
 
@@ -66,7 +58,7 @@ export function createDaytonaSandboxes(config: Config): Sandboxes<DaytonaSandbox
       const proxy = await daytona.create({
         snapshot: SNAPSHOT,
         ephemeral: true,
-        labels: SANDBOX_TAGS,
+        labels: sandboxTags(config),
         ttlMinutes: Math.ceil((config.runTimeoutMs + SANDBOX_MARGIN_MS) / 60_000),
         envVars: { INFISICAL_AGENT_VAULT_PROXY_TOKEN: config.proxyToken, INFISICAL_DOMAIN: config.infisicalDomain },
       });
@@ -81,7 +73,7 @@ export function createDaytonaSandboxes(config: Config): Sandboxes<DaytonaSandbox
         snapshot: SNAPSHOT,
         linkedSandbox: proxy.id,
         ephemeral: true,
-        labels: SANDBOX_TAGS,
+        labels: sandboxTags(config),
         networkBlockAll: true,
       });
       const link = await proxy.process.executeCommand(GET_LINK_ADDRESS);
@@ -116,7 +108,6 @@ export function createDaytonaSandboxes(config: Config): Sandboxes<DaytonaSandbox
       const { cmdId } = await agent.process.executeSessionCommand(session, { command, runAsync: true });
       if (!cmdId) throw new Error("Daytona didn't return a command ID");
 
-      // Streams stdout into a queue that `lines` drains, so progress reaches Slack as it happens.
       const queue: string[] = [];
       let wake: (() => void) | undefined;
       let finished = false;
@@ -180,7 +171,7 @@ export function createDaytonaSandboxes(config: Config): Sandboxes<DaytonaSandbox
 
     async sweep() {
       let count = 0;
-      for await (const sandbox of daytona.list({ labels: SANDBOX_TAGS })) {
+      for await (const sandbox of daytona.list({ labels: sandboxTags(config) })) {
         await sandbox.delete().catch((err) => {
           if (!(err instanceof DaytonaNotFoundError)) throw err;
         });
